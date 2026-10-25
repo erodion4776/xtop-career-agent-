@@ -69,7 +69,7 @@ return;
 }
 
 next();
-});
+}
 
 // API information
 app.get("/api-info", (_req, res) => {

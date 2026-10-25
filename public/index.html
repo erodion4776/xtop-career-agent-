@@ -1,248 +1,468 @@
-
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html><html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101827">
   <title>XTOP Career Agent</title>
   <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; padding: 18px;
-      font-family: Arial, sans-serif;
-      background: #f1f5f9; color: #172033;
-    }
-    main { max-width: 850px; margin: auto; }
-    header {
-      background: #101827; color: white;
-      padding: 24px; border-radius: 18px;
-      margin-bottom: 16px;
-    }
-    h1 { margin: 0 0 8px; font-size: 25px; }
-    p { line-height: 1.5; }
-    .muted { color: #cbd5e1; }
-    .panel {
-      background: white; border: 1px solid #dbe2ea;
-      padding: 16px; border-radius: 14px; margin-bottom: 16px;
-    }
-    input, button {
-      width: 100%; padding: 13px;
-      border-radius: 9px; font-size: 15px;
-    }
-    input {
-      border: 1px solid #cbd5e1; margin: 8px 0;
-    }
-    button {
-      border: 0; background: #1d4ed8;
-      color: white; font-weight: bold; cursor: pointer;
-      margin: 5px 0;
-    }
-    button.secondary { background: #334155; }
-    button:disabled { opacity: .6; }
-    .grid {
-      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }
-    .job {
-      border: 1px solid #e2e8f0; border-radius: 10px;
-      padding: 12px; margin-top: 10px; overflow-wrap: anywhere;
-    }
-    .job h3 { margin: 0 0 8px; }
-    #output {
-      white-space: pre-wrap; overflow-wrap: anywhere;
-      background: #0f172a; color: #e2e8f0;
-      padding: 14px; border-radius: 10px; min-height: 50px;
-    }
-    .status { font-size: 13px; color: #cbd5e1; }
-    @media(max-width: 480px) {
-      body { padding: 10px; }
-      .grid { grid-template-columns: 1fr; }
-    }
+    :root {
+      color-scheme: dark;
+      --bg: #0b1120;
+      --panel: #151f31;
+      --border: #2a3850;
+      --text: #edf3ff;
+      --muted: #9eacc3;
+      --accent: #4ade80;
+      --blue: #60a5fa;
+      --danger: #f87171;
+    }* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, sans-serif;
+}
+
+header {
+  padding: 25px 18px;
+  background: #101827;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+  margin: 0 0 5px;
+  font-size: 25px;
+}
+
+header p, .muted {
+  color: var(--muted);
+  margin: 0;
+}
+
+main {
+  width: min(900px, 100%);
+  margin: auto;
+  padding: 16px;
+}
+
+section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 17px;
+  margin-bottom: 15px;
+}
+
+h2 { font-size: 18px; margin: 0 0 12px; }
+
+input {
+  width: 100%;
+  padding: 12px;
+  margin: 8px 0 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: #0b1120;
+  color: white;
+  font-size: 15px;
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+button {
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #26354d;
+  color: white;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+button.primary {
+  background: #166534;
+  border-color: #22c55e;
+}
+
+button.blue {
+  background: #1d4ed8;
+  border-color: #60a5fa;
+}
+
+button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.status {
+  padding: 10px;
+  border-radius: 8px;
+  background: #0b1120;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  margin-top: 12px;
+}
+
+.job {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.job:last-child { border-bottom: 0; }
+
+.job h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.job p {
+  margin: 4px 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+a { color: var(--blue); }
+
+.pill {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 2px 8px;
+  font-size: 12px;
+  margin-top: 5px;
+}
+
+footer {
+  padding: 18px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 430px) {
+  .buttons { grid-template-columns: 1fr; }
+  header h1 { font-size: 22px; }
+}
+
   </style>
 </head>
 <body>
-<main>
   <header>
     <h1>XTOP Career Agent</h1>
-    <p class="muted">Remote jobs, contracts, Gmail and application tracking.</p>
-    <div id="serverStatus" class="status">Checking server…</div>
-  </header>
+    <p>Remote jobs, contracts, Gmail and application tracking.</p>
+    <p style="margin-top:10px;color:#4ade80">● Server dashboard</p>
+  </header>  <main>
+    <section>
+      <h2>Secure access</h2>
+      <p class="muted">
+        Enter your AGENT_API_KEY from Render. The key is kept
+        in this page's memory and is not saved to browser storage.
+      </p>  <input
+    id="apiKey"
+    type="password"
+    placeholder="Enter AGENT_API_KEY"
+    autocomplete="off"
+    spellcheck="false"
+  >
 
-  <section class="panel">
-    <h2>Secure access</h2>
-    <p>Enter your AGENT_API_KEY from Render. It is kept in this tab's session only.</p>
-    <input id="apiKey" type="password" autocomplete="off"
-      placeholder="Enter agent API key">
-    <button id="saveKey">Connect dashboard</button>
-    <button id="clearKey" class="secondary">Disconnect and clear key</button>
-  </section>
+  <div class="buttons">
+    <button class="primary" id="connectBtn">Connect dashboard</button>
+    <button id="disconnectBtn">Disconnect and clear key</button>
+  </div>
 
-  <section class="panel">
-    <h2>Agent controls</h2>
-    <div class="grid">
-      <button data-action="health">Check server</button>
-      <button data-action="db">Check database</button>
-      <button data-action="gmail">Send test email</button>
-      <button data-action="jobs">Load job leads</button>
-    </div>
-    <p class="status">The test email is sent only to your configured GMAIL_ALLOWED_EMAIL.</p>
-  </section>
+  <div id="connectionStatus" class="status" aria-live="polite">
+    Not connected
+  </div>
+</section>
 
-  <section class="panel">
-    <h2>Job leads</h2>
-    <div id="jobs">Connect the dashboard, then select Load job leads.</div>
-  </section>
+<section>
+  <h2>Agent controls</h2>
+  <p class="muted">
+    Discover remote software roles, check your database,
+    and manage saved job leads.
+  </p>
 
-  <section class="panel">
-    <h2>Activity</h2>
-    <div id="output" role="status">Dashboard loaded.</div>
-  </section>
-</main>
+  <div class="buttons">
+    <button id="serverBtn">Check server</button>
+    <button id="dbBtn">Check database</button>
+    <button id="emailBtn">Send test email</button>
+    <button id="loadBtn">Load job leads</button>
+    <button class="primary" id="discoverBtn">
+      Discover jobs
+    </button>
+  </div>
 
-<script>
-(() => {
-  const keyInput = document.getElementById("apiKey");
-  const output = document.getElementById("output");
-  const jobsBox = document.getElementById("jobs");
-  const status = document.getElementById("serverStatus");
-  let apiKey = "";
+  <div id="discoveryStatus" class="status" aria-live="polite">
+    Ready. Connect the dashboard to begin.
+  </div>
 
-  function show(value) {
-    output.textContent = typeof value === "string"
-      ? value : JSON.stringify(value, null, 2);
-  }
+  <p class="muted" style="margin-top:10px;font-size:13px">
+    Test email is sent only to your configured GMAIL_ALLOWED_EMAIL.
+    Job discovery checks configured public sources; verify each
+    job's country eligibility before applying.
+  </p>
+</section>
 
-  async function request(path, options = {}) {
-    const headers = {
-      ...(options.headers || {}),
-      ...(apiKey ? { "x-agent-key": apiKey } : {})
-    };
-    if (options.body) headers["Content-Type"] = "application/json";
+<section>
+  <h2>Job leads</h2>
+  <div id="jobCount" class="muted">No jobs loaded yet.</div>
+  <div id="jobsList">
+    <p class="muted">Connect and load job leads to see results.</p>
+  </div>
+</section>
 
-    const response = await fetch(path, { ...options, headers });
-    const text = await response.text();
-    let result;
-    try { result = JSON.parse(text); }
-    catch { result = text; }
+<section>
+  <h2>Activity</h2>
+  <div id="activity" class="status" aria-live="polite">
+    Dashboard ready.
+  </div>
+</section>
 
-    if (!response.ok) {
-      throw new Error(
-        typeof result === "string" ? result :
-        (result.error || `Request failed: ${response.status}`)
-      );
-    }
-    return result;
-  }
+  </main>  <footer>XTOP Retail Technologies · XTOP Career Agent</footer>  <script>
+    (() => {
+      "use strict";
 
-  async function checkServer() {
-    try {
-      const result = await request("/health");
-      status.textContent = result.ok
-        ? "Server online" : "Server response received";
-    } catch {
-      status.textContent = "Server unavailable";
-    }
-  }
+      let apiKey = "";
+      let busy = false;
 
-  async function loadJobs() {
-    const data = await request("/api/jobs");
-    const list = Array.isArray(data) ? data :
-      (Array.isArray(data.jobs) ? data.jobs : []);
+      const $ = (id) => document.getElementById(id);
 
-    jobsBox.replaceChildren();
-
-    if (!list.length) {
-      jobsBox.textContent = "No job leads saved yet.";
-      return;
-    }
-
-    for (const job of list) {
-      const card = document.createElement("article");
-      card.className = "job";
-
-      const title = document.createElement("h3");
-      title.textContent = job.title || "Untitled role";
-      card.appendChild(title);
-
-      const details = document.createElement("p");
-      details.textContent =
-        [job.company, job.location, job.status].filter(Boolean).join(" · ");
-      card.appendChild(details);
-
-      if (job.url) {
-        try {
-          const url = new URL(job.url);
-          if (url.protocol === "https:" || url.protocol === "http:") {
-            const link = document.createElement("a");
-            link.href = url.href;
-            link.target = "_blank";
-            link.rel = "noopener noreferrer";
-            link.textContent = "Open job listing";
-            card.appendChild(link);
-          }
-        } catch {}
+      function log(message) {
+        $("activity").textContent =
+          new Date().toLocaleTimeString() + " — " + message;
       }
 
-      jobsBox.appendChild(card);
-    }
-  }
+      function status(message) {
+        $("discoveryStatus").textContent = message;
+      }
 
-  document.getElementById("saveKey").addEventListener("click", async () => {
-    const candidate = keyInput.value.trim();
-    if (!candidate) {
-      show("Enter your AGENT_API_KEY first.");
-      return;
-    }
-    apiKey = candidate;
-    show("Checking API key…");
-    try {
-      await request("/api/db-check");
-      show("Connected. Database check succeeded.");
-      keyInput.value = "";
-    } catch (error) {
-      apiKey = "";
-      show(error.message);
-    }
-  });
+      function setBusy(value) {
+        busy = value;
+        document.querySelectorAll("button").forEach((button) => {
+          button.disabled = value;
+        });
+      }
 
-  document.getElementById("clearKey").addEventListener("click", () => {
-    apiKey = "";
-    keyInput.value = "";
-    show("Dashboard disconnected. Key cleared from this tab.");
-  });
+      async function request(path, options = {}, authenticated = true) {
+        const headers = {
+          "Accept": "application/json",
+          ...(options.headers || {})
+        };
 
-  document.querySelectorAll("[data-action]").forEach(button => {
-    button.addEventListener("click", async () => {
-      const action = button.dataset.action;
-      button.disabled = true;
-      try {
-        if (action === "health") {
-          const result = await request("/health");
-          show(result);
-          status.textContent = result.ok ? "Server online" : "Check response";
-        } else if (action === "db") {
-          show(await request("/api/db-check"));
-        } else if (action === "jobs") {
-          await loadJobs();
-          show("Job leads loaded.");
-        } else if (action === "gmail") {
-          if (!confirm("Send a test email to your configured Gmail account?")) {
-            show("Test email cancelled.");
-            return;
-          }
-          show(await request("/api/gmail/test-send", { method: "POST", body: "{}" }));
+        if (authenticated) {
+          if (!apiKey) throw new Error("Connect the dashboard first.");
+          headers["x-agent-key"] = apiKey;
         }
-      } catch (error) {
-        show(error.message);
-      } finally {
-        button.disabled = false;
-      }
-    });
-  });
 
-  checkServer();
-})();
-</script>
-</body>
+        const response = await fetch(path, {
+          ...options,
+          headers
+        });
+
+        const contentType = response.headers.get("content-type") || "";
+        const data = contentType.includes("application/json")
+          ? await response.json()
+          : await response.text();
+
+        if (!response.ok) {
+          const message = typeof data === "string"
+            ? data
+            : data.error || `Request failed (${response.status})`;
+          throw new Error(message);
+        }
+
+        return data;
+      }
+
+      function renderJobs(jobs) {
+        const list = $("jobsList");
+        list.replaceChildren();
+        $("jobCount").textContent =
+          `${jobs.length} job lead${jobs.length === 1 ? "" : "s"} returned`;
+
+        if (!jobs.length) {
+          const empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = "No job leads saved yet. Try Discover jobs.";
+          list.appendChild(empty);
+          return;
+        }
+
+        jobs.forEach((job) => {
+          const item = document.createElement("article");
+          item.className = "job";
+
+          const title = document.createElement("h3");
+          title.textContent = job.title || "Untitled role";
+          item.appendChild(title);
+
+          const company = document.createElement("p");
+          company.textContent =
+            `${job.company || "Company not listed"} · ${job.location || "Location not listed"}`;
+          item.appendChild(company);
+
+          const details = document.createElement("p");
+          details.textContent =
+            `Status: ${job.status || "discovered"} · Source: ${job.source || "unknown"}`;
+          item.appendChild(details);
+
+          if (job.employment_type) {
+            const type = document.createElement("span");
+            type.className = "pill";
+            type.textContent = job.employment_type;
+            item.appendChild(type);
+          }
+
+          if (job.url) {
+            try {
+              const parsedUrl = new URL(job.url);
+              if (parsedUrl.protocol === "https:" ||
+                  parsedUrl.protocol === "http:") {
+                const link = document.createElement("p");
+                const anchor = document.createElement("a");
+                anchor.href = parsedUrl.href;
+                anchor.target = "_blank";
+                anchor.rel = "noopener noreferrer";
+                anchor.textContent = "View job listing ↗";
+                link.appendChild(anchor);
+                item.appendChild(link);
+              }
+            } catch (_) {
+              // Do not render an invalid job URL.
+            }
+          }
+
+          list.appendChild(item);
+        });
+      }
+
+      async function run(label, task) {
+        if (busy) return;
+        setBusy(true);
+        status(label + "…");
+        log(label + " started.");
+
+        try {
+          const result = await task();
+          status(typeof result === "string"
+            ? result
+            : JSON.stringify(result, null, 2));
+          log(label + " completed.");
+        } catch (error) {
+          status("Error: " + (error.message || "Request failed."));
+          log(label + " failed: " + (error.message || "Unknown error."));
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      $("connectBtn").addEventListener("click", async () => {
+        const candidate = $("apiKey").value.trim();
+
+        if (!candidate) {
+          $("connectionStatus").textContent =
+            "Enter your AGENT_API_KEY first.";
+          return;
+        }
+
+        if (busy) return;
+        setBusy(true);
+
+        try {
+          const response = await fetch("/api/db-check", {
+            headers: { "x-agent-key": candidate }
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(data.error || "Could not connect.");
+          }
+
+          apiKey = candidate;
+          $("connectionStatus").textContent =
+            "Connected. Supabase is reachable.";
+          log("Dashboard connected successfully.");
+        } catch (error) {
+          apiKey = "";
+          $("connectionStatus").textContent =
+            "Connection failed: " + error.message;
+          log("Dashboard connection failed.");
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      $("disconnectBtn").addEventListener("click", () => {
+        apiKey = "";
+        $("apiKey").value = "";
+        $("connectionStatus").textContent = "Disconnected.";
+        status("Connect the dashboard to continue.");
+        log("Dashboard disconnected; key cleared from page memory.");
+      });
+
+      $("serverBtn").addEventListener("click", () =>
+        run("Checking server", async () => {
+          const data = await request("/health", {}, false);
+          return `Server online. ${JSON.stringify(data)}`;
+        })
+      );
+
+      $("dbBtn").addEventListener("click", () =>
+        run("Checking database", async () => {
+          const data = await request("/api/db-check");
+          return `Database: ${data.database}. Job count: ${data.jobCount}.`;
+        })
+      );
+
+      $("emailBtn").addEventListener("click", () =>
+        run("Sending test email", async () => {
+          return await request("/api/gmail/test-send", {
+            method: "POST"
+          });
+        })
+      );
+
+      $("loadBtn").addEventListener("click", () =>
+        run("Loading job leads", async () => {
+          const jobs = await request("/api/jobs");
+          if (!Array.isArray(jobs)) {
+            throw new Error("Unexpected job-list response.");
+          }
+          renderJobs(jobs);
+          return `Loaded ${jobs.length} job lead(s).`;
+        })
+      );
+
+      $("discoverBtn").addEventListener("click", () =>
+        run("Discovering remote jobs", async () => {
+          const result = await request("/api/jobs/discover", {
+            method: "POST"
+          });
+
+          const summary =
+            `Discovery finished. Matched: ${result.matched ?? 0}; ` +
+            `newly saved: ${result.saved ?? 0}; ` +
+            `duplicates/skipped: ${result.skipped ?? 0}; ` +
+            `save failures: ${result.saveFailures ?? 0}.`;
+
+          if (result.sourceErrors?.length) {
+            log("Some job sources reported errors.");
+          }
+
+          const jobs = await request("/api/jobs");
+          if (Array.isArray(jobs)) renderJobs(jobs);
+
+          return summary + " " +
+            "Review each listing and confirm Nigeria eligibility before applying.";
+        })
+      );
+    })();
+  </script></body>
 </html>

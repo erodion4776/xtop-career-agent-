@@ -2,24 +2,30 @@
 import crypto from "node:crypto";
 import { google } from "googleapis";
 
-const clientId = process.env.GMAIL_CLIENT_ID!;
-const clientSecret = process.env.GMAIL_CLIENT_SECRET!;
-const redirectUri = process.env.GMAIL_REDIRECT_URI!;
-const encryptionKeyHex = process.env.GMAIL_TOKEN_ENCRYPTION_KEY!;
+const clientId = process.env.GMAIL_CLIENT_ID;
+const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+const redirectUri = process.env.GMAIL_REDIRECT_URI;
+const encryptionKeyHex = process.env.GMAIL_TOKEN_ENCRYPTION_KEY;
 
-if (
-  !clientId ||
-  !clientSecret ||
-  !redirectUri ||
-  !/^[0-9a-fA-F]{64}$/.test(encryptionKeyHex)
-) {
-  throw new Error("Gmail OAuth configuration is incomplete.");
+if (!clientId || !clientSecret || !redirectUri) {
+  throw new Error("Gmail OAuth environment variables are missing.");
+}
+
+if (!encryptionKeyHex || !/^[0-9a-fA-F]{64}$/.test(encryptionKeyHex)) {
+  throw new Error(
+    "GMAIL_TOKEN_ENCRYPTION_KEY must be 64 hexadecimal characters."
+  );
 }
 
 const encryptionKey = Buffer.from(encryptionKeyHex, "hex");
 
-export const oauthClient = () =>
-  new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+export function oauthClient() {
+  return new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    redirectUri
+  );
+}
 
 export function gmailAuthorizationUrl(state: string) {
   return oauthClient().generateAuthUrl({
@@ -36,6 +42,7 @@ export function gmailAuthorizationUrl(state: string) {
 
 export function encryptToken(token: string): string {
   const iv = crypto.randomBytes(12);
+
   const cipher = crypto.createCipheriv(
     "aes-256-gcm",
     encryptionKey,
@@ -47,11 +54,11 @@ export function encryptToken(token: string): string {
     cipher.final()
   ]);
 
-  const tag = cipher.getAuthTag();
+  const authTag = cipher.getAuthTag();
 
   return [
     iv.toString("hex"),
-    tag.toString("hex"),
+    authTag.toString("hex"),
     encrypted.toString("hex")
   ].join(":");
 }
@@ -85,20 +92,25 @@ export async function sendGmail(
 ) {
   const auth = oauthClient();
 
-  auth.setCredentials({ refresh_token: refreshToken });
+  auth.setCredentials({
+    refresh_token: refreshToken
+  });
 
-  const gmail = google.gmail({ version: "v1", auth });
+  const gmail = google.gmail({
+    version: "v1",
+    auth
+  });
 
   const message = [
     `To: ${recipient}`,
     `Subject: ${subject}`,
+    "MIME-Version: 1.0",
     "Content-Type: text/plain; charset=utf-8",
     "",
     body
   ].join("\r\n");
 
-  const raw = Buffer.from(message)
-    .toString("base64url");
+  const raw = Buffer.from(message).toString("base64url");
 
   return gmail.users.messages.send({
     userId: "me",

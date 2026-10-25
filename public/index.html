@@ -1,0 +1,106 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>XTOP Career Agent</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #f1f5f9; color: #172033;
+    }
+    main { max-width: 720px; margin: auto; }
+    header {
+      background: #101827; color: white;
+      padding: 24px; border-radius: 18px;
+      margin-bottom: 20px;
+    }
+    h1 { margin: 0 0 8px; font-size: 25px; }
+    header p { margin: 0; color: #cbd5e1; }
+    .status {
+      display: inline-block; margin-top: 16px;
+      background: #164e3a; color: #bbf7d0;
+      padding: 7px 10px; border-radius: 20px;
+      font-size: 13px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    button {
+      width: 100%; min-height: 110px;
+      padding: 16px; text-align: left;
+      border: 1px solid #dbe2ea; border-radius: 14px;
+      background: white; color: #172033;
+      font-size: 16px; font-weight: bold;
+    }
+    button span {
+      display: block; margin-top: 9px;
+      font-size: 13px; font-weight: normal;
+      color: #64748b;
+    }
+    #message {
+      background: white; padding: 16px;
+      border-radius: 12px; margin-top: 16px;
+      overflow-wrap: anywhere;
+    }
+    @media (max-width: 380px) {
+      body { padding: 12px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>XTOP Career Agent</h1>
+    <p>Your personal remote-job search assistant</p>
+    <div class="status">Dashboard interface ready</div>
+  </header>
+
+  <section class="grid">
+    <button type="button" data-action="health">
+      Server Status
+      <span>Check whether the agent is running</span>
+    </button>
+    <button type="button" data-action="gmail">
+      Test Gmail
+      <span>Send a test email to your connected account</span>
+    </button>
+    <button type="button" data-action="jobs">
+      View Job Leads
+      <span>Review opportunities saved in Supabase</span>
+    </button>
+    <button type="button" data-action="applications">
+      Applications
+      <span>Review tracked application statuses</span>
+    </button>
+  </section>
+
+  <div id="message" role="status">
+    Dashboard loaded. Backend actions will be connected next.
+  </div>
+</main>
+
+<script>
+  const message = document.getElementById("message");
+  document.querySelectorAll("[data-action]").forEach(button => {
+    button.addEventListener("click", () => {
+      const action = button.dataset.action;
+      message.textContent = action === "health"
+        ? "Health check will be connected next."
+        : action === "gmail"
+        ? "Gmail test will be connected next."
+        : action === "jobs"
+        ? "Job leads will be loaded from your backend next."
+        : "Application tracking will be connected next.";
+    });
+  });
+</script>
+</body>
+</html>

@@ -55,7 +55,21 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api", authenticate);
-
+app.get("/api/db-check", async (_req, res) => {
+  try {
+    const jobs = await listJobs();
+    res.json({
+      ok: true,
+      database: "connected",
+      jobCount: jobs.length
+    });
+  } catch {
+    res.status(500).json({
+      ok: false,
+      database: "connection_failed"
+    });
+  }
+});
 app.get("/api/jobs", async (_req, res) => {
   try {
     res.json(await listJobs());

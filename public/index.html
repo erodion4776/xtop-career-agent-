@@ -9,48 +9,54 @@
   <style>
     * { box-sizing: border-box; }
     body {
-      margin: 0; padding: 20px;
+      margin: 0; padding: 18px;
       font-family: Arial, sans-serif;
       background: #f1f5f9; color: #172033;
     }
-    main { max-width: 720px; margin: auto; }
+    main { max-width: 850px; margin: auto; }
     header {
       background: #101827; color: white;
       padding: 24px; border-radius: 18px;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
     }
     h1 { margin: 0 0 8px; font-size: 25px; }
-    header p { margin: 0; color: #cbd5e1; }
-    .status {
-      display: inline-block; margin-top: 16px;
-      background: #164e3a; color: #bbf7d0;
-      padding: 7px 10px; border-radius: 20px;
-      font-size: 13px;
+    p { line-height: 1.5; }
+    .muted { color: #cbd5e1; }
+    .panel {
+      background: white; border: 1px solid #dbe2ea;
+      padding: 16px; border-radius: 14px; margin-bottom: 16px;
     }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
+    input, button {
+      width: 100%; padding: 13px;
+      border-radius: 9px; font-size: 15px;
+    }
+    input {
+      border: 1px solid #cbd5e1; margin: 8px 0;
     }
     button {
-      width: 100%; min-height: 110px;
-      padding: 16px; text-align: left;
-      border: 1px solid #dbe2ea; border-radius: 14px;
-      background: white; color: #172033;
-      font-size: 16px; font-weight: bold;
+      border: 0; background: #1d4ed8;
+      color: white; font-weight: bold; cursor: pointer;
+      margin: 5px 0;
     }
-    button span {
-      display: block; margin-top: 9px;
-      font-size: 13px; font-weight: normal;
-      color: #64748b;
+    button.secondary { background: #334155; }
+    button:disabled { opacity: .6; }
+    .grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
     }
-    #message {
-      background: white; padding: 16px;
-      border-radius: 12px; margin-top: 16px;
-      overflow-wrap: anywhere;
+    .job {
+      border: 1px solid #e2e8f0; border-radius: 10px;
+      padding: 12px; margin-top: 10px; overflow-wrap: anywhere;
     }
-    @media (max-width: 380px) {
-      body { padding: 12px; }
+    .job h3 { margin: 0 0 8px; }
+    #output {
+      white-space: pre-wrap; overflow-wrap: anywhere;
+      background: #0f172a; color: #e2e8f0;
+      padding: 14px; border-radius: 10px; min-height: 50px;
+    }
+    .status { font-size: 13px; color: #cbd5e1; }
+    @media(max-width: 480px) {
+      body { padding: 10px; }
       .grid { grid-template-columns: 1fr; }
     }
   </style>
@@ -59,48 +65,184 @@
 <main>
   <header>
     <h1>XTOP Career Agent</h1>
-    <p>Your personal remote-job search assistant</p>
-    <div class="status">Dashboard interface ready</div>
+    <p class="muted">Remote jobs, contracts, Gmail and application tracking.</p>
+    <div id="serverStatus" class="status">Checking server…</div>
   </header>
 
-  <section class="grid">
-    <button type="button" data-action="health">
-      Server Status
-      <span>Check whether the agent is running</span>
-    </button>
-    <button type="button" data-action="gmail">
-      Test Gmail
-      <span>Send a test email to your connected account</span>
-    </button>
-    <button type="button" data-action="jobs">
-      View Job Leads
-      <span>Review opportunities saved in Supabase</span>
-    </button>
-    <button type="button" data-action="applications">
-      Applications
-      <span>Review tracked application statuses</span>
-    </button>
+  <section class="panel">
+    <h2>Secure access</h2>
+    <p>Enter your AGENT_API_KEY from Render. It is kept in this tab's session only.</p>
+    <input id="apiKey" type="password" autocomplete="off"
+      placeholder="Enter agent API key">
+    <button id="saveKey">Connect dashboard</button>
+    <button id="clearKey" class="secondary">Disconnect and clear key</button>
   </section>
 
-  <div id="message" role="status">
-    Dashboard loaded. Backend actions will be connected next.
-  </div>
+  <section class="panel">
+    <h2>Agent controls</h2>
+    <div class="grid">
+      <button data-action="health">Check server</button>
+      <button data-action="db">Check database</button>
+      <button data-action="gmail">Send test email</button>
+      <button data-action="jobs">Load job leads</button>
+    </div>
+    <p class="status">The test email is sent only to your configured GMAIL_ALLOWED_EMAIL.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Job leads</h2>
+    <div id="jobs">Connect the dashboard, then select Load job leads.</div>
+  </section>
+
+  <section class="panel">
+    <h2>Activity</h2>
+    <div id="output" role="status">Dashboard loaded.</div>
+  </section>
 </main>
 
 <script>
-  const message = document.getElementById("message");
+(() => {
+  const keyInput = document.getElementById("apiKey");
+  const output = document.getElementById("output");
+  const jobsBox = document.getElementById("jobs");
+  const status = document.getElementById("serverStatus");
+  let apiKey = "";
+
+  function show(value) {
+    output.textContent = typeof value === "string"
+      ? value : JSON.stringify(value, null, 2);
+  }
+
+  async function request(path, options = {}) {
+    const headers = {
+      ...(options.headers || {}),
+      ...(apiKey ? { "x-agent-key": apiKey } : {})
+    };
+    if (options.body) headers["Content-Type"] = "application/json";
+
+    const response = await fetch(path, { ...options, headers });
+    const text = await response.text();
+    let result;
+    try { result = JSON.parse(text); }
+    catch { result = text; }
+
+    if (!response.ok) {
+      throw new Error(
+        typeof result === "string" ? result :
+        (result.error || `Request failed: ${response.status}`)
+      );
+    }
+    return result;
+  }
+
+  async function checkServer() {
+    try {
+      const result = await request("/health");
+      status.textContent = result.ok
+        ? "Server online" : "Server response received";
+    } catch {
+      status.textContent = "Server unavailable";
+    }
+  }
+
+  async function loadJobs() {
+    const data = await request("/api/jobs");
+    const list = Array.isArray(data) ? data :
+      (Array.isArray(data.jobs) ? data.jobs : []);
+
+    jobsBox.replaceChildren();
+
+    if (!list.length) {
+      jobsBox.textContent = "No job leads saved yet.";
+      return;
+    }
+
+    for (const job of list) {
+      const card = document.createElement("article");
+      card.className = "job";
+
+      const title = document.createElement("h3");
+      title.textContent = job.title || "Untitled role";
+      card.appendChild(title);
+
+      const details = document.createElement("p");
+      details.textContent =
+        [job.company, job.location, job.status].filter(Boolean).join(" · ");
+      card.appendChild(details);
+
+      if (job.url) {
+        try {
+          const url = new URL(job.url);
+          if (url.protocol === "https:" || url.protocol === "http:") {
+            const link = document.createElement("a");
+            link.href = url.href;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = "Open job listing";
+            card.appendChild(link);
+          }
+        } catch {}
+      }
+
+      jobsBox.appendChild(card);
+    }
+  }
+
+  document.getElementById("saveKey").addEventListener("click", async () => {
+    const candidate = keyInput.value.trim();
+    if (!candidate) {
+      show("Enter your AGENT_API_KEY first.");
+      return;
+    }
+    apiKey = candidate;
+    show("Checking API key…");
+    try {
+      await request("/api/db-check");
+      show("Connected. Database check succeeded.");
+      keyInput.value = "";
+    } catch (error) {
+      apiKey = "";
+      show(error.message);
+    }
+  });
+
+  document.getElementById("clearKey").addEventListener("click", () => {
+    apiKey = "";
+    keyInput.value = "";
+    show("Dashboard disconnected. Key cleared from this tab.");
+  });
+
   document.querySelectorAll("[data-action]").forEach(button => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const action = button.dataset.action;
-      message.textContent = action === "health"
-        ? "Health check will be connected next."
-        : action === "gmail"
-        ? "Gmail test will be connected next."
-        : action === "jobs"
-        ? "Job leads will be loaded from your backend next."
-        : "Application tracking will be connected next.";
+      button.disabled = true;
+      try {
+        if (action === "health") {
+          const result = await request("/health");
+          show(result);
+          status.textContent = result.ok ? "Server online" : "Check response";
+        } else if (action === "db") {
+          show(await request("/api/db-check"));
+        } else if (action === "jobs") {
+          await loadJobs();
+          show("Job leads loaded.");
+        } else if (action === "gmail") {
+          if (!confirm("Send a test email to your configured Gmail account?")) {
+            show("Test email cancelled.");
+            return;
+          }
+          show(await request("/api/gmail/test-send", { method: "POST", body: "{}" }));
+        }
+      } catch (error) {
+        show(error.message);
+      } finally {
+        button.disabled = false;
+      }
     });
   });
+
+  checkServer();
+})();
 </script>
 </body>
 </html>

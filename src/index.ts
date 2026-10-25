@@ -1,6 +1,8 @@
 
 import "dotenv/config";
 import express from "express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { google } from "googleapis";
 
@@ -29,12 +31,22 @@ import {
 } from "./gmail-store.js";
 
 const app = express();
+
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "100kb" }));
 
+// Serve the mobile dashboard from the public directory.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDirectory = path.resolve(__dirname, "../public");
+
+app.use(express.static(publicDirectory));
+
 const port = Number(process.env.PORT || 3000);
 const apiKey = process.env.AGENT_API_KEY;
-const allowedEmail = process.env.GMAIL_ALLOWED_EMAIL?.trim().toLowerCase();
+const allowedEmail = process.env.GMAIL_ALLOWED_EMAIL
+  ?.trim()
+  .toLowerCase();
 
 function authenticate(
   req: express.Request,
@@ -60,12 +72,14 @@ function authenticate(
   next();
 }
 
-app.get("/", (_req, res) => {
+// API information remains available at /api-info.
+app.get("/api-info", (_req, res) => {
   res.json({
     name: "XTOP Career Agent",
-    version: "0.2.0",
+    version: "0.3.0",
     status: "running",
     capabilities: [
+      "mobile dashboard",
       "health check",
       "job lead tracking",
       "application status tracking",
@@ -84,7 +98,7 @@ app.get("/health", (_req, res) => {
 
 /*
  * Start Gmail OAuth.
- * The state is short-lived and single-use.
+ * State is short-lived and single-use.
  */
 app.get("/auth/google", (_req, res) => {
   if (!allowedEmail) {
@@ -94,13 +108,18 @@ app.get("/auth/google", (_req, res) => {
     return;
   }
 
-  const state = createState();
-
-  res.redirect(gmailAuthorizationUrl(state));
+  try {
+    const state = createState();
+    res.redirect(gmailAuthorizationUrl(state));
+  } catch {
+    res.status(500).send(
+      "Could not start Gmail authorization. Check server configuration."
+    );
+  }
 });
 
 /*
- * Google redirects back here after authorization.
+ * Google redirects here after authorization.
  * Only the configured Gmail account is accepted.
  */
 app.get("/auth/google/callback", async (req, res) => {
@@ -196,7 +215,6 @@ app.get("/api/jobs", async (_req, res) => {
 app.post("/api/jobs", async (req, res) => {
   try {
     const job = await addJob(req.body as JobLead);
-
     res.status(201).json({ job });
   } catch (error) {
     if (error instanceof z.ZodError) {

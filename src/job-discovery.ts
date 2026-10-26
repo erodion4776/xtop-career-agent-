@@ -29,7 +29,13 @@ url: "https://remotive.com/api/remote-jobs?search=node.js&limit=50"
 ];
 
 function isRelevantRole(job: RemoteJob): boolean {
-const text = "${job.title} ${job.description}".toLowerCase();
+
+function isRelevantRole(job: RemoteJob): boolean {
+  const text = `${job.title} ${job.description}`.toLowerCase();
+
+  return /software|developer|engineer|typescript|javascript|node\.?js|backend|back-end|full.?stack|automation|python|api\b|programmer|web development/i.test(text);
+}
+
 
 return /software|developer|engineer|typescript|javascript|node.?js|backend|back-end|full.?stack|automation|python|api\b|programmer|web development/i.test(text);
 }

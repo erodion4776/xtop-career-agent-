@@ -58,7 +58,6 @@ export interface AddJobResult {
 }
 
 export async function addJob(input: JobLead): Promise<AddJobResult> {
-  // ── Validate input before touching the database ──────────────────
   const parsed = jobSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -71,7 +70,7 @@ export async function addJob(input: JobLead): Promise<AddJobResult> {
 
   const job = parsed.data;
 
-  // ── Step 1: try insert, skip if URL already exists ───────────────
+  // Step 1: try insert, skip if URL already exists
   const { data: inserted, error: insertError } = await supabase
     .from("job_leads")
     .upsert(job, {
@@ -94,7 +93,7 @@ export async function addJob(input: JobLead): Promise<AddJobResult> {
     return { inserted: true, updated: false };
   }
 
-  // ── Step 2: row exists — refresh feed-owned fields only ──────────
+  // Step 2: row exists — refresh feed-owned fields only.
   // User-owned fields (status, notes, salary_min_ngn, salary_max_ngn)
   // are intentionally excluded from the update.
   const { data: existing, error: lookupError } = await supabase
@@ -181,4 +180,4 @@ export async function updateJobStatus(
   if (error) throw error;
 
   return data;
-}P
+}

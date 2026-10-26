@@ -65,34 +65,35 @@ function isValidHttpUrl(value: string | undefined | null): value is string {
   }
 }
 
-function truncateDescription(text: string, maxLen = 19000): string {
+function truncateDescription(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
 
-  let cut = text.slice(0, maxLen);
+  var cut = text.slice(0, maxLen);
   cut = cut.replace(/<[^>]*$/, "");
 
-  const lastSpace = cut.lastIndexOf(" ");
+  var lastSpace = cut.lastIndexOf(" ");
   if (lastSpace > maxLen * 0.9) {
     cut = cut.slice(0, lastSpace);
   }
 
-  return cut + "\u2026";
+  return cut + "...";
 }
 
 async function fetchWithRetry(
   url: string,
   init: RequestInit,
-  timeoutMs = 15000,
-  maxRetries = 2,
+  timeoutMs: number,
+  maxRetries?: number,
 ): Promise<Response> {
-  let lastError: Error | undefined;
+  var retries = maxRetries ?? 2;
+  var lastError: Error | undefined;
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+  for (var attempt = 0; attempt <= retries; attempt++) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, timeoutMs);
 
     try {
-      const res = await fetch(url, {
+      var res = await fetch(url, {
         ...init,
         signal: controller.signal,
       });
@@ -103,14 +104,14 @@ async function fetchWithRetry(
         return res;
       }
 
-      if (res.ok || attempt === maxRetries) {
+      if (res.ok || attempt === retries) {
         return res;
       }
     } catch (err) {
       lastError =
         err instanceof Error ? err : new Error(String(err));
 
-      if (attempt === maxRetries) {
+      if (attempt === retries) {
         throw lastError;
       }
     } finally {
@@ -124,27 +125,27 @@ async function fetchWithRetry(
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise(function (r) { setTimeout(r, ms); });
 }
 
 // ─── Relevance and eligibility ──────────────────────────────────────────────
 
 function isRelevantRole(title: string): boolean {
-  const t = title.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
+  var t = title.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
 
-  const excluded =
+  var excluded =
     /\b(copywriter|writer|editor|sales|account executive|office assistant|administrative assistant|virtual assistant|service desk|help desk|customer support|customer service|technical support|support specialist|data annotator|video annotation|ai trainer|recruiter|marketing specialist|business development|project manager|product manager|product owner|scrum master|qa engineer|qa tester|tester|technical writer|ux designer|ui designer|graphic designer|data analyst|business analyst|human resources|talent acquisition|sourcer)\b/i;
 
   if (excluded.test(t)) return false;
 
-  const developerRole =
+  var developerRole =
     /\b(software developer|software engineer|web developer|web engineer|frontend developer|front-end developer|front end developer|frontend engineer|front-end engineer|front end engineer|backend developer|back-end developer|back end developer|backend engineer|back-end engineer|back end engineer|full.?stack developer|full.?stack engineer|mobile developer|mobile engineer|application developer|application engineer|api developer|api engineer|platform engineer|devops engineer|site reliability engineer|sre|programmer|automation developer|automation engineer|ai engineer|machine learning engineer|ml engineer|data engineer|cloud engineer|systems engineer|technical lead|tech lead|software architect|blockchain developer|blockchain engineer|embedded developer|embedded engineer|firmware engineer|security engineer|infrastructure engineer)\b/i;
 
   return developerRole.test(t);
 }
 
 function matchesTechStack(job: TrackedJob): boolean {
-  const haystack = (job.title + " " + job.description).toLowerCase();
+  var haystack = (job.title + " " + job.description).toLowerCase();
 
   return /\b(node\.?js|typescript|javascript|react|next\.?js|express|backend|back-end|full.?stack|supabase|api\b|apis\b|automation|rest\s*api|graphql)\b/i.test(
     haystack,
@@ -156,7 +157,7 @@ function assessNigeriaEligibility(location: string): boolean {
 }
 
 function mayIncludeNigeria(location: string): boolean {
-  const loc = location.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
+  var loc = location.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
 
   return (
     /\bnigeria\b/.test(loc) ||
@@ -170,7 +171,7 @@ function mayIncludeNigeria(location: string): boolean {
 }
 
 function eligibilityNote(job: TrackedJob): string {
-  const location = job.candidate_required_location.trim();
+  var location = job.candidate_required_location.trim();
 
   if (/\bnigeria\b/i.test(location)) {
     return (
@@ -181,20 +182,20 @@ function eligibilityNote(job: TrackedJob): string {
 
   if (mayIncludeNigeria(location)) {
     return (
-      'The listing says "' + location + '", which may include Nigeria. ' +
+      "The listing says \"" + location + "\", which may include Nigeria. " +
       "Verify eligibility before applying. Source: " + job.source + "."
     );
   }
 
   return (
-    'Nigeria eligibility is unconfirmed; listing location: "' + location + '". ' +
+    "Nigeria eligibility is unconfirmed; listing location: \"" + location + "\". " +
     "Verify before applying. Source: " + job.source + "."
   );
 }
 
 function relevanceScore(job: TrackedJob): number {
-  const t = job.title.toLowerCase();
-  let score = 0;
+  var t = job.title.toLowerCase();
+  var score = 0;
 
   if (/\bsoftware developer\b|\bsoftware engineer\b/i.test(t)) score += 10;
   if (/full.?stack/i.test(t)) score += 9;
@@ -224,16 +225,16 @@ async function fetchRemotive(source: {
   name: string;
   url: string;
 }): Promise<{ result: SourceResult; jobs: TrackedJob[] }> {
-  const result: SourceResult = {
+  var result: SourceResult = {
     source: source.name,
     returned: 0,
     valid: 0,
     matched: 0,
   };
-  const jobs: TrackedJob[] = [];
+  var jobs: TrackedJob[] = [];
 
   try {
-    const response = await fetchWithRetry(
+    var response = await fetchWithRetry(
       source.url,
       {
         headers: {
@@ -246,14 +247,14 @@ async function fetchRemotive(source: {
 
     if (response.status === 429) {
       result.error = "HTTP 429 (rate limited)";
-      return { result, jobs };
+      return { result: result, jobs: jobs };
     }
     if (!response.ok) {
       result.error = "HTTP " + response.status;
-      return { result, jobs };
+      return { result: result, jobs: jobs };
     }
 
-    const payload: unknown = await response.json();
+    var payload: unknown = await response.json();
 
     if (
       !payload ||
@@ -262,18 +263,19 @@ async function fetchRemotive(source: {
       !Array.isArray((payload as Record<string, unknown>).jobs)
     ) {
       result.error = "Unexpected Remotive response format";
-      return { result, jobs };
+      return { result: result, jobs: jobs };
     }
 
-    const rawJobs = (payload as { jobs: unknown[] }).jobs;
+    var rawJobs = (payload as { jobs: unknown[] }).jobs;
     result.returned = rawJobs.length;
-    const sampleTitles: string[] = [];
+    var sampleTitles: string[] = [];
 
-    for (const item of rawJobs) {
-      const parsed = JobSchema.safeParse(item);
+    for (var i = 0; i < rawJobs.length; i++) {
+      var item = rawJobs[i];
+      var parsed = JobSchema.safeParse(item);
       if (!parsed.success) continue;
 
-      const data = parsed.data;
+      var data = parsed.data;
       if (!isValidHttpUrl(data.url)) continue;
 
       result.valid++;
@@ -293,23 +295,23 @@ async function fetchRemotive(source: {
         : "Unknown source error";
   }
 
-  return { result, jobs };
+  return { result: result, jobs: jobs };
 }
 
 async function fetchRemoteOk(): Promise<{
   result: SourceResult;
   jobs: TrackedJob[];
 }> {
-  const result: SourceResult = {
+  var result: SourceResult = {
     source: "Remote OK",
     returned: 0,
     valid: 0,
     matched: 0,
   };
-  const jobs: TrackedJob[] = [];
+  var jobs: TrackedJob[] = [];
 
   try {
-    const response = await fetchWithRetry(
+    var response = await fetchWithRetry(
       REMOTE_OK_URL,
       {
         headers: {
@@ -322,37 +324,38 @@ async function fetchRemoteOk(): Promise<{
 
     if (response.status === 429) {
       result.error = "HTTP 429 (rate limited)";
-      return { result, jobs };
+      return { result: result, jobs: jobs };
     }
     if (!response.ok) {
       result.error = "HTTP " + response.status;
-      return { result, jobs };
+      return { result: result, jobs: jobs };
     }
 
-    const payload: unknown = await response.json();
+    var payload: unknown = await response.json();
 
     if (!Array.isArray(payload)) {
       result.error = "Expected a JSON array";
-      return { result, jobs };
+      return { result: result, jobs: jobs };
     }
 
-    const items = payload.filter(
-      (item) => item && typeof item === "object" && "position" in item,
+    var items = payload.filter(
+      function (item: unknown) {
+        return item && typeof item === "object" && "position" in item;
+      },
     );
 
     result.returned = items.length;
-    const sampleTitles: string[] = [];
+    var sampleTitles: string[] = [];
 
-    for (const item of items) {
-      const parsed = RemoteOkSchema.safeParse(item);
+    for (var i = 0; i < items.length; i++) {
+      var parsed = RemoteOkSchema.safeParse(items[i]);
       if (!parsed.success) continue;
 
-      const remote = parsed.data;
-
-      let listingUrl: string | undefined;
+      var remote = parsed.data;
+      var listingUrl: string | undefined;
 
       if (isValidHttpUrl(remote.url)) {
-        const hostname = new URL(remote.url).hostname.toLowerCase();
+        var hostname = new URL(remote.url).hostname.toLowerCase();
         if (hostname === "remoteok.com" || hostname === "www.remoteok.com") {
           listingUrl = remote.url;
         }
@@ -390,35 +393,40 @@ async function fetchRemoteOk(): Promise<{
         : "Unknown source error";
   }
 
-  return { result, jobs };
+  return { result: result, jobs: jobs };
 }
 
 // ─── Main export ────────────────────────────────────────────────────────────
 
 export async function discoverJobs() {
-  const uniqueJobs = new Map<string, TrackedJob>();
+  var uniqueJobs = new Map<string, TrackedJob>();
 
-  const remotivePromises = REMOTIVE_SOURCES.map(
-    (source, i) =>
-      new Promise<{ result: SourceResult; jobs: TrackedJob[] }>((resolve) =>
-        setTimeout(() => resolve(fetchRemotive(source)), i * 1500),
-      ),
+  var remotivePromises = REMOTIVE_SOURCES.map(
+    function (source, i) {
+      return new Promise<{ result: SourceResult; jobs: TrackedJob[] }>(
+        function (resolve) {
+          setTimeout(function () { resolve(fetchRemotive(source)); }, i * 1500);
+        },
+      );
+    },
   );
 
-  const outcomes = await Promise.allSettled([
+  var outcomes = await Promise.allSettled([
     ...remotivePromises,
     fetchRemoteOk(),
   ]);
 
-  const sourceResults: SourceResult[] = [];
+  var sourceResults: SourceResult[] = [];
 
-  for (const outcome of outcomes) {
+  for (var o = 0; o < outcomes.length; o++) {
+    var outcome = outcomes[o];
     if (outcome.status === "fulfilled") {
-      const { result, jobs } = outcome.value;
-      sourceResults.push(result);
+      var value = outcome.value;
+      sourceResults.push(value.result);
 
-      for (const job of jobs) {
-        const existing = uniqueJobs.get(job.url);
+      for (var j = 0; j < value.jobs.length; j++) {
+        var job = value.jobs[j];
+        var existing = uniqueJobs.get(job.url);
         if (!existing || relevanceScore(job) > relevanceScore(existing)) {
           uniqueJobs.set(job.url, job);
         }
@@ -437,55 +445,62 @@ export async function discoverJobs() {
     }
   }
 
-  const rankedJobs = [...uniqueJobs.values()].sort(
-    (a, b) => relevanceScore(b) - relevanceScore(a),
+  var rankedJobs = [...uniqueJobs.values()].sort(
+    function (a, b) { return relevanceScore(b) - relevanceScore(a); },
   );
 
-  let techStackMatched = 0;
-  let nigeriaConfirmed = 0;
-  let nigeriaPotential = 0;
+  var techStackMatched = 0;
+  var nigeriaConfirmed = 0;
+  var nigeriaPotential = 0;
 
-  for (const job of rankedJobs) {
-    if (matchesTechStack(job)) techStackMatched++;
+  for (var k = 0; k < rankedJobs.length; k++) {
+    var rj = rankedJobs[k];
+    if (matchesTechStack(rj)) techStackMatched++;
 
-    if (assessNigeriaEligibility(job.candidate_required_location)) {
+    if (assessNigeriaEligibility(rj.candidate_required_location)) {
       nigeriaConfirmed++;
-    } else if (mayIncludeNigeria(job.candidate_required_location)) {
+    } else if (mayIncludeNigeria(rj.candidate_required_location)) {
       nigeriaPotential++;
     }
   }
 
-  let saved = 0;
-  let duplicates = 0;
-  let updated = 0;
-  const saveErrors: Array<{ url: string; error: string }> = [];
+  var saved = 0;
+  var updated = 0;
+  var duplicates = 0;
+  var validationFailures = 0;
+  var saveErrors: Array<{ url: string; error: string }> = [];
 
-  for (const job of rankedJobs) {
-    const eligible = assessNigeriaEligibility(job.candidate_required_location);
+  for (var m = 0; m < rankedJobs.length; m++) {
+    var dj = rankedJobs[m];
+    var eligible = assessNigeriaEligibility(dj.candidate_required_location);
 
     try {
-      const result = await addJob({
-        company: job.company_name,
-        title: job.title,
-        location: job.candidate_required_location,
-        url: job.url,
+      var result = await addJob({
+        company: dj.company_name,
+        title: dj.title,
+        location: dj.candidate_required_location,
+        url: dj.url,
         source: "job_board",
-        employment_type: job.job_type,
+        employment_type: dj.job_type,
         remote: true,
         nigeria_eligible: eligible,
-        description: truncateDescription(job.description),
+        description: truncateDescription(dj.description, 19000),
         status: "discovered",
-        notes: eligibilityNote(job),
+        notes: eligibilityNote(dj),
       });
 
-      if (result) {
+      if (result.inserted) {
         saved++;
+      } else if (result.updated) {
+        updated++;
+      } else if (result.reason === "validation") {
+        validationFailures++;
       } else {
         duplicates++;
       }
     } catch (error) {
       saveErrors.push({
-        url: job.url,
+        url: dj.url,
         error:
           error instanceof Error
             ? error.message.slice(0, 200)
@@ -497,18 +512,19 @@ export async function discoverJobs() {
   return {
     ok: true,
     checkedSources: sourceResults.length,
-    sourceResults,
+    sourceResults: sourceResults,
     matched: rankedJobs.length,
-    techStackMatched,
-    saved,
-    duplicates,
-    updated,
+    techStackMatched: techStackMatched,
+    saved: saved,
+    updated: updated,
+    duplicates: duplicates,
+    validationFailures: validationFailures,
     skipped: duplicates,
     nigeriaEligible: nigeriaConfirmed,
-    nigeriaPotential,
+    nigeriaPotential: nigeriaPotential,
     sourceErrors: sourceResults
-      .filter((s) => s.error)
-      .map((s) => ({ source: s.source, error: s.error! })),
+      .filter(function (s) { return !!s.error; })
+      .map(function (s) { return { source: s.source, error: s.error! }; }),
     saveFailures: saveErrors.length,
     saveErrors: saveErrors.slice(0, 5),
   };

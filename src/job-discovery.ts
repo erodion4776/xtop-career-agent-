@@ -55,7 +55,7 @@ const REMOTIVE_SOURCES = [
 
 const REMOTE_OK_URL = "https://remoteok.com/api";
 
-const USER_AGENT = "XTOP-Career-Agent/1.2";
+const USER_AGENT = "XTOP-Career-Agent/1.3";
 
 // ─── Utility helpers ────────────────────────────────────────────────────────
 
@@ -194,72 +194,15 @@ function detectMinYearsRequired(description: string): number {
   return minYears;
 }
 
-// ─── Relevance scoring ──────────────────────────────────────────────────────
-
-function relevanceScore(job: TrackedJob): number {
-  var t = job.title.toLowerCase();
-  var haystack = (job.title + " " + job.description).toLowerCase();
-  var score = 0;
-
-  if (/full.?stack/i.test(t)) score += 14;
-  else if (/backend|back-end|back end/i.test(t)) score += 12;
-  else if (/api developer|api engineer|integration engineer/i.test(t)) score += 11;
-  else if (/automation/i.test(t)) score += 10;
-  else if (/\bsoftware developer\b|\bsoftware engineer\b/i.test(t)) score += 9;
-  else if (/frontend|front-end|front end/i.test(t)) score += 7;
-  else if (/mobile developer|mobile engineer/i.test(t)) score += 6;
-  else if (/devops|platform engineer|sre|site reliability/i.test(t)) score += 5;
-
-  if (/\bnode\.?js\b/i.test(haystack)) score += 8;
-  if (/\btypescript\b/i.test(haystack)) score += 8;
-  if (/\bsupabase\b/i.test(haystack)) score += 7;
-  if (/\brest\s*api\b|\bapi\b|\bapis\b|\bgraphql\b/i.test(haystack)) score += 5;
-  if (/\breact\b/i.test(haystack)) score += 5;
-  if (/\bautomation\b/i.test(haystack)) score += 5;
-  if (/\bai.?agent\b|\bagent.?integration\b|\bllm\b/i.test(haystack)) score += 6;
-  if (/\bexpress\b/i.test(haystack)) score += 4;
-  if (/\bnext\.?js\b/i.test(haystack)) score += 4;
-  if (/\bjavascript\b/i.test(haystack)) score += 3;
-
-  if (/\bpython\b/i.test(haystack)) score += 2;
-  if (/ai engineer|machine learning|ml engineer/i.test(t)) score += 2;
-  if (/cloud engineer|aws|gcp|azure/i.test(t)) score += 2;
-
-  var level = detectExperienceLevel(job);
-  if (level === "staff") score -= 8;
-  else if (level === "senior") score -= 4;
-  else if (level === "mid") score += 2;
-  else if (level === "junior") score += 1;
-
-  var minYears = detectMinYearsRequired(job.description);
-  if (minYears >= 10) score -= 6;
-  else if (minYears >= 7) score -= 4;
-  else if (minYears >= 5) score -= 2;
-
-  if (/\b(contract|freelance|part.?time|temporary|fixed.?term)\b/i.test(haystack)) {
-    score += 4;
-  }
-
-  return score;
-}
-
-type SuitabilityTier = "high" | "medium" | "low";
-
-function classifySuitability(score: number): SuitabilityTier {
-  if (score >= 25) return "high";
-  if (score >= 14) return "medium";
-  return "low";
-}
-
 // ─── Nigeria eligibility ────────────────────────────────────────────────────
 
 function assessNigeriaEligibility(location: string): boolean {
   return /\bnigeria\b/i.test(location);
 }
 
-function nigeriaCategory(
-  location: string,
-): "confirmed" | "potential" | "restricted" | "unknown" {
+type NigeriaCategory = "confirmed" | "potential" | "restricted" | "unknown";
+
+function nigeriaCategory(location: string): NigeriaCategory {
   var loc = location.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
 
   if (!loc || loc === "remote" || loc === "not specified" || loc === "n/a" || loc === "-") {
@@ -321,6 +264,146 @@ function eligibilityNote(job: TrackedJob): string {
   );
 }
 
+// ─── Relevance scoring ──────────────────────────────────────────────────────
+
+/**
+ * Suitability score weighted for the user's profile.
+ *
+ * Key change in v1.3: Nigeria eligibility now affects the score directly.
+ * Restricted locations receive a large penalty so that jobs unlikely to
+ * accept Nigerian applicants drop below accessible opportunities, even
+ * when their tech stack matches well.
+ */
+function relevanceScore(job: TrackedJob): number {
+  var t = job.title.toLowerCase();
+  var haystack = (job.title + " " + job.description).toLowerCase();
+  var score = 0;
+
+  // ── Role type (title-based) ────────────────────────────────────────
+  if (/full.?stack/i.test(t)) score += 14;
+  else if (/backend|back-end|back end/i.test(t)) score += 12;
+  else if (/api developer|api engineer|integration engineer/i.test(t)) score += 11;
+  else if (/automation/i.test(t)) score += 10;
+  else if (/\bsoftware developer\b|\bsoftware engineer\b/i.test(t)) score += 9;
+  else if (/frontend|front-end|front end/i.test(t)) score += 7;
+  else if (/mobile developer|mobile engineer/i.test(t)) score += 6;
+  else if (/devops|platform engineer|sre|site reliability/i.test(t)) score += 5;
+
+  // ── User's preferred stack (title + description) ───────────────────
+  if (/\bnode\.?js\b/i.test(haystack)) score += 8;
+  if (/\btypescript\b/i.test(haystack)) score += 8;
+  if (/\bsupabase\b/i.test(haystack)) score += 7;
+  if (/\brest\s*api\b|\bapi\b|\bapis\b|\bgraphql\b/i.test(haystack)) score += 5;
+  if (/\breact\b/i.test(haystack)) score += 5;
+  if (/\bautomation\b/i.test(haystack)) score += 5;
+  if (/\bai.?agent\b|\bagent.?integration\b|\bllm\b/i.test(haystack)) score += 6;
+  if (/\bexpress\b/i.test(haystack)) score += 4;
+  if (/\bnext\.?js\b/i.test(haystack)) score += 4;
+  if (/\bjavascript\b/i.test(haystack)) score += 3;
+
+  // ── Other tech (lower weight) ──────────────────────────────────────
+  if (/\bpython\b/i.test(haystack)) score += 2;
+  if (/ai engineer|machine learning|ml engineer/i.test(t)) score += 2;
+  if (/cloud engineer|aws|gcp|azure/i.test(t)) score += 2;
+
+  // ── Experience level adjustment ────────────────────────────────────
+  var level = detectExperienceLevel(job);
+  if (level === "staff") score -= 8;
+  else if (level === "senior") score -= 4;
+  else if (level === "mid") score += 2;
+  else if (level === "junior") score += 1;
+
+  // ── Explicit years-of-experience penalty ───────────────────────────
+  var minYears = detectMinYearsRequired(job.description);
+  if (minYears >= 10) score -= 6;
+  else if (minYears >= 7) score -= 4;
+  else if (minYears >= 5) score -= 2;
+
+  // ── Contract/freelance bonus ───────────────────────────────────────
+  if (/\b(contract|freelance|part.?time|temporary|fixed.?term)\b/i.test(haystack)) {
+    score += 4;
+  }
+
+  // ── Nigeria eligibility adjustment ─────────────────────────────────
+  // This is the key change. A job that perfectly matches the tech stack
+  // but is restricted to US/EU applicants is not a realistic opportunity.
+  // The penalty must be large enough to drop restricted jobs below
+  // accessible ones with similar stack alignment.
+  var elig = nigeriaCategory(job.candidate_required_location);
+  if (elig === "confirmed") score += 10;
+  else if (elig === "potential") score += 4;
+  else if (elig === "restricted") score -= 20;
+  // "unknown" gets no adjustment — these may or may not accept
+  // Nigerian applicants and need manual verification.
+
+  return score;
+}
+
+type SuitabilityTier = "high" | "medium" | "low";
+
+function classifySuitability(score: number): SuitabilityTier {
+  if (score >= 25) return "high";
+  if (score >= 14) return "medium";
+  return "low";
+}
+
+// ─── Fit reason ─────────────────────────────────────────────────────────────
+
+/**
+ * Generates a short human-readable explanation of why a job scored the
+ * way it did. Used in the priority queue to help the user decide which
+ * listings to review first.
+ */
+function fitReason(job: TrackedJob, score: number): string {
+  var parts: string[] = [];
+  var haystack = (job.title + " " + job.description).toLowerCase();
+  var t = job.title.toLowerCase();
+
+  // Stack highlights
+  var stackHits: string[] = [];
+  if (/\bnode\.?js\b/i.test(haystack)) stackHits.push("Node.js");
+  if (/\btypescript\b/i.test(haystack)) stackHits.push("TypeScript");
+  if (/\bjavascript\b/i.test(haystack)) stackHits.push("JavaScript");
+  if (/\breact\b/i.test(haystack)) stackHits.push("React");
+  if (/\bsupabase\b/i.test(haystack)) stackHits.push("Supabase");
+  if (/\bapi\b|\bapis\b|\brest\s*api\b|\bgraphql\b/i.test(haystack)) stackHits.push("APIs");
+  if (/\bautomation\b/i.test(haystack)) stackHits.push("Automation");
+  if (/\bai.?agent\b|\bllm\b/i.test(haystack)) stackHits.push("AI/Agent");
+  if (/\bexpress\b/i.test(haystack)) stackHits.push("Express");
+  if (/\bnext\.?js\b/i.test(haystack)) stackHits.push("Next.js");
+
+  if (stackHits.length > 0) {
+    parts.push("Stack: " + stackHits.join(", "));
+  }
+
+  // Role type
+  if (/full.?stack/i.test(t)) parts.push("Full-stack role");
+  else if (/backend|back-end/i.test(t)) parts.push("Backend role");
+  else if (/frontend|front-end/i.test(t)) parts.push("Frontend role");
+
+  // Experience
+  var level = detectExperienceLevel(job);
+  if (level === "staff") parts.push("Staff/principal level (penalized)");
+  else if (level === "senior") parts.push("Senior level (penalized)");
+  else if (level === "mid") parts.push("Mid-level");
+  else if (level === "junior") parts.push("Junior/entry-level");
+
+  // Eligibility
+  var elig = nigeriaCategory(job.candidate_required_location);
+  if (elig === "confirmed") parts.push("Nigeria confirmed");
+  else if (elig === "potential") parts.push("Potentially Nigeria-eligible");
+  else if (elig === "restricted") parts.push("Location restricted (penalized)");
+
+  // Contract
+  if (/\b(contract|freelance|part.?time)\b/i.test(haystack)) {
+    parts.push("Contract/freelance");
+  }
+
+  if (parts.length === 0) parts.push("General software role");
+
+  return parts.join(". ") + ". Score: " + score + ".";
+}
+
 // ─── Diagnostics type ───────────────────────────────────────────────────────
 
 interface SourceResult {
@@ -340,6 +423,7 @@ interface TopJob {
   tier: SuitabilityTier;
   eligibility: string;
   url: string;
+  reason: string;
 }
 
 // ─── Per-source fetchers ────────────────────────────────────────────────────
@@ -606,8 +690,6 @@ export async function discoverJobs() {
     else if (rjTier === "medium") mediumSuitability++;
     else lowSuitability++;
 
-    // Collect top 10 jobs from THIS run only, ranked by score.
-    // These are fresh discoveries, not old database records.
     if (topJobs.length < 10) {
       topJobs.push({
         title: rj.title,
@@ -617,6 +699,7 @@ export async function discoverJobs() {
         tier: rjTier,
         eligibility: cat,
         url: rj.url,
+        reason: fitReason(rj, rjScore),
       });
     }
   }

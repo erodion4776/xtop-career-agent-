@@ -12,6 +12,7 @@ const JobSchema = z.object({
   description: z.string().optional().default(""),
   job_type: z.string().optional().default("Unknown"),
   publication_date: z.string().optional(),
+  salary: z.string().optional(),
 });
 
 type ParsedJob = z.infer<typeof JobSchema>;
@@ -31,6 +32,8 @@ const RemoteOkSchema = z.object({
   description: z.string().optional(),
   tags: z.array(z.string()).optional(),
   date: z.string().optional(),
+  salary_min: z.number().optional(),
+  salary_max: z.number().optional(),
 });
 
 // ─── Source configuration ───────────────────────────────────────────────────
@@ -52,7 +55,7 @@ const REMOTIVE_SOURCES = [
 
 const REMOTE_OK_URL = "https://remoteok.com/api";
 
-const USER_AGENT = "XTOP-Career-Agent/1.1";
+const USER_AGENT = "XTOP-Career-Agent/1.2";
 
 // ─── Utility helpers ────────────────────────────────────────────────────────
 
@@ -140,7 +143,7 @@ function isRelevantRole(title: string): boolean {
   if (excluded.test(t)) return false;
 
   var developerRole =
-    /\b(software developer|software engineer|web developer|web engineer|frontend developer|front-end developer|front end developer|frontend engineer|front-end engineer|front end engineer|backend developer|back-end developer|back end developer|backend engineer|back-end engineer|back end engineer|full.?stack developer|full.?stack engineer|mobile developer|mobile engineer|application developer|application engineer|api developer|api engineer|platform engineer|devops engineer|site reliability engineer|sre|programmer|automation developer|automation engineer|ai engineer|machine learning engineer|ml engineer|data engineer|cloud engineer|systems engineer|technical lead|tech lead|software architect|blockchain developer|blockchain engineer|embedded developer|embedded engineer|firmware engineer|security engineer|infrastructure engineer|solutions architect|integration engineer|release engineer|build engineer)\b/i;
+    /\b(software developer|software engineer|web developer|web engineer|frontend developer|front-end developer|front end developer|frontend engineer|front-end engineer|front end engineer|backend developer|back-end developer|back end developer|backend engineer|back-end engineer|back end engineer|full.?stack developer|full.?stack engineer|mobile developer|mobile engineer|application developer|application engineer|api developer|api engineer|platform engineer|devops engineer|site reliability engineer|sre|programmer|automation developer|automation engineer|ai engineer|machine learning engineer|ml engineer|data engineer|cloud engineer|systems engineer|technical lead|tech lead|software architect|solutions architect|blockchain developer|blockchain engineer|embedded developer|embedded engineer|firmware engineer|security engineer|infrastructure engineer|integration engineer|release engineer|build engineer)\b/i;
 
   return developerRole.test(t);
 }
@@ -148,7 +151,7 @@ function isRelevantRole(title: string): boolean {
 function matchesTechStack(job: TrackedJob): boolean {
   var haystack = (job.title + " " + job.description).toLowerCase();
 
-  return /\b(node\.?js|typescript|javascript|react|next\.?js|express|backend|back-end|full.?stack|supabase|api\b|apis\b|automation|rest\s*api|graphql)\b/i.test(
+  return /\b(node\.?js|typescript|javascript|react|next\.?js|express|backend|back-end|full.?stack|supabase|api\b|apis\b|automation|rest\s*api|graphql|ai.?agent|llm|agent.?integration)\b/i.test(
     haystack,
   );
 }
@@ -160,12 +163,39 @@ type ExperienceLevel = "junior" | "mid" | "senior" | "staff" | "unknown";
 function detectExperienceLevel(job: TrackedJob): ExperienceLevel {
   var haystack = (job.title + " " + job.description).toLowerCase();
 
-  if (/\b(staff|principal|distinguished)\b/i.test(haystack)) return "staff";
-  if (/\b(senior|sr\.?|lead|head of|director|vp of|chief)\b/i.test(haystack)) return "senior";
+  if (/\b(staff|principal|distinguished|fellow)\b/i.test(haystack)) return "staff";
+  if (/\b(senior|sr\.?|lead|head of|director|vp of|chief|architect)\b/i.test(haystack)) return "senior";
   if (/\b(junior|jr\.?|entry.?level|graduate|intern|associate)\b/i.test(haystack)) return "junior";
   if (/\b(mid.?level|intermediate)\b/i.test(haystack)) return "mid";
 
   return "unknown";
+}
+
+/**
+ * Detect explicit years-of-experience requirements from the description.
+ * Returns the minimum years mentioned, or 0 if none found.
+ */
+function detectMinYearsRequired(description: string): number {
+  var d = description.toLowerCase();
+
+  var patterns = [
+    /(\d+)\+?\s*years?\s*(of\s*)?(experience|exp\.?)/i,
+    /minimum\s*(of\s*)?(\d+)\s*years?/i,
+    /at\s*least\s*(\d+)\s*years?/i,
+    /(\d+)\s*-\s*\d+\s*years?\s*(of\s*)?(experience|exp\.?)/i,
+  ];
+
+  var minYears = 0;
+
+  for (var i = 0; i < patterns.length; i++) {
+    var match = d.match(patterns[i]);
+    if (match) {
+      var years = parseInt(match[1] || match[2] || "0", 10);
+      if (years > minYears) minYears = years;
+    }
+  }
+
+  return minYears;
 }
 
 // ─── Relevance scoring ──────────────────────────────────────────────────────
@@ -173,9 +203,9 @@ function detectExperienceLevel(job: TrackedJob): ExperienceLevel {
 /**
  * Suitability score weighted for the user's profile:
  * - Strong preference for Node.js, TypeScript, APIs, Supabase,
- *   automation, and full-stack roles
- * - Penalty for senior/staff/principal roles that typically require
- *   7-10+ years of experience
+ *   automation, AI-agent integration, and full-stack roles
+ * - Penalty for senior/staff/architect roles and high experience
+ *   requirements that exceed demonstrated experience
  * - Bonus for contract and freelance opportunities
  *
  * Used for ranking and suitability classification.
@@ -188,23 +218,24 @@ function relevanceScore(job: TrackedJob): number {
   // ── Role type (title-based) ────────────────────────────────────────
   if (/full.?stack/i.test(t)) score += 14;
   else if (/backend|back-end|back end/i.test(t)) score += 12;
-  else if (/\bsoftware developer\b|\bsoftware engineer\b/i.test(t)) score += 10;
+  else if (/api developer|api engineer|integration engineer/i.test(t)) score += 11;
+  else if (/automation/i.test(t)) score += 10;
+  else if (/\bsoftware developer\b|\bsoftware engineer\b/i.test(t)) score += 9;
   else if (/frontend|front-end|front end/i.test(t)) score += 7;
   else if (/mobile developer|mobile engineer/i.test(t)) score += 6;
   else if (/devops|platform engineer|sre|site reliability/i.test(t)) score += 5;
-  else if (/api developer|api engineer|integration engineer/i.test(t)) score += 8;
-  else if (/automation/i.test(t)) score += 7;
 
   // ── User's preferred stack (title + description) ───────────────────
   if (/\bnode\.?js\b/i.test(haystack)) score += 8;
   if (/\btypescript\b/i.test(haystack)) score += 8;
   if (/\bsupabase\b/i.test(haystack)) score += 7;
+  if (/\brest\s*api\b|\bapi\b|\bapis\b|\bgraphql\b/i.test(haystack)) score += 5;
   if (/\breact\b/i.test(haystack)) score += 5;
-  if (/\bapi\b|\bapis\b|\brest\s*api\b|\bgraphql\b/i.test(haystack)) score += 5;
   if (/\bautomation\b/i.test(haystack)) score += 5;
-  if (/\bjavascript\b/i.test(haystack)) score += 3;
+  if (/\bai.?agent\b|\bagent.?integration\b|\bllm\b/i.test(haystack)) score += 6;
   if (/\bexpress\b/i.test(haystack)) score += 4;
   if (/\bnext\.?js\b/i.test(haystack)) score += 4;
+  if (/\bjavascript\b/i.test(haystack)) score += 3;
 
   // ── Other tech (lower weight) ──────────────────────────────────────
   if (/\bpython\b/i.test(haystack)) score += 2;
@@ -212,13 +243,17 @@ function relevanceScore(job: TrackedJob): number {
   if (/cloud engineer|aws|gcp|azure/i.test(t)) score += 2;
 
   // ── Experience level adjustment ────────────────────────────────────
-  // Senior/staff/principal roles often require 7-10+ years and may not
-  // be realistic targets. Penalize rather than bonus.
   var level = detectExperienceLevel(job);
-  if (level === "staff") score -= 6;
-  else if (level === "senior") score -= 3;
+  if (level === "staff") score -= 8;
+  else if (level === "senior") score -= 4;
   else if (level === "mid") score += 2;
   else if (level === "junior") score += 1;
+
+  // ── Explicit years-of-experience penalty ───────────────────────────
+  var minYears = detectMinYearsRequired(job.description);
+  if (minYears >= 10) score -= 6;
+  else if (minYears >= 7) score -= 4;
+  else if (minYears >= 5) score -= 2;
 
   // ── Contract/freelance bonus ───────────────────────────────────────
   if (/\b(contract|freelance|part.?time|temporary|fixed.?term)\b/i.test(haystack)) {
@@ -231,8 +266,8 @@ function relevanceScore(job: TrackedJob): number {
 type SuitabilityTier = "high" | "medium" | "low";
 
 function classifySuitability(score: number): SuitabilityTier {
-  if (score >= 20) return "high";
-  if (score >= 10) return "medium";
+  if (score >= 25) return "high";
+  if (score >= 14) return "medium";
   return "low";
 }
 
@@ -246,6 +281,10 @@ function nigeriaCategory(
   location: string,
 ): "confirmed" | "potential" | "restricted" | "unknown" {
   var loc = location.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
+
+  if (!loc || loc === "remote" || loc === "not specified" || loc === "n/a" || loc === "-") {
+    return "unknown";
+  }
 
   if (/\bnigeria\b/.test(loc)) return "confirmed";
 
@@ -311,6 +350,15 @@ interface SourceResult {
   matched: number;
   sampleTitles?: string[];
   error?: string;
+}
+
+interface TopJob {
+  title: string;
+  company: string;
+  score: number;
+  tier: SuitabilityTier;
+  eligibility: string;
+  url: string;
 }
 
 // ─── Per-source fetchers ────────────────────────────────────────────────────
@@ -558,9 +606,12 @@ export async function discoverJobs() {
   var highSuitability = 0;
   var mediumSuitability = 0;
   var lowSuitability = 0;
+  var topJobs: TopJob[] = [];
 
   for (var k = 0; k < rankedJobs.length; k++) {
     var rj = rankedJobs[k];
+    var rjScore = relevanceScore(rj);
+    var rjTier = classifySuitability(rjScore);
 
     if (matchesTechStack(rj)) techStackMatched++;
 
@@ -570,10 +621,21 @@ export async function discoverJobs() {
     else if (cat === "restricted") nigeriaRestricted++;
     else nigeriaUnknown++;
 
-    var tier = classifySuitability(relevanceScore(rj));
-    if (tier === "high") highSuitability++;
-    else if (tier === "medium") mediumSuitability++;
+    if (rjTier === "high") highSuitability++;
+    else if (rjTier === "medium") mediumSuitability++;
     else lowSuitability++;
+
+    // Collect top 10 jobs for the priority queue
+    if (topJobs.length < 10) {
+      topJobs.push({
+        title: rj.title,
+        company: rj.company_name,
+        score: rjScore,
+        tier: rjTier,
+        eligibility: cat,
+        url: rj.url,
+      });
+    }
   }
 
   // ── Persist ────────────────────────────────────────────────────────
@@ -646,6 +708,7 @@ export async function discoverJobs() {
     highSuitability: highSuitability,
     mediumSuitability: mediumSuitability,
     lowSuitability: lowSuitability,
+    topJobs: topJobs,
     sourceErrors: sourceResults
       .filter(function (s) { return !!s.error; })
       .map(function (s) { return { source: s.source, error: s.error! }; }),

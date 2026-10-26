@@ -51,7 +51,7 @@ const REMOTIVE_SOURCES = [
 
 const REMOTE_OK_URL = "https://remoteok.com/api";
 
-const USER_AGENT = "XTOP-Career-Agent/0.8";
+const USER_AGENT = "XTOP-Career-Agent/0.9";
 
 // ─── Utility helpers ────────────────────────────────────────────────────────
 
@@ -176,20 +176,20 @@ function eligibilityNote(job: TrackedJob): string {
   if (/\bnigeria\b/i.test(location)) {
     return (
       "Nigeria is explicitly listed. " +
-      "Verify work-authorisation requirements. Source: " + job.source + "."
+      "Verify work-authorisation requirements. Provider: " + job.source + "."
     );
   }
 
   if (mayIncludeNigeria(location)) {
     return (
       "The listing says \"" + location + "\", which may include Nigeria. " +
-      "Verify eligibility before applying. Source: " + job.source + "."
+      "Verify eligibility before applying. Provider: " + job.source + "."
     );
   }
 
   return (
     "Nigeria eligibility is unconfirmed; listing location: \"" + location + "\". " +
-    "Verify before applying. Source: " + job.source + "."
+    "Verify before applying. Provider: " + job.source + "."
   );
 }
 
@@ -475,6 +475,9 @@ export async function discoverJobs() {
     var eligible = assessNigeriaEligibility(dj.candidate_required_location);
 
     try {
+      // The database "source" column uses the fixed enum value "job_board".
+      // The actual provider name (e.g. "Remotive TypeScript", "Remote OK")
+      // is preserved in the notes field via eligibilityNote().
       var result = await addJob({
         company: dj.company_name,
         title: dj.title,
@@ -495,8 +498,13 @@ export async function discoverJobs() {
         updated++;
       } else if (result.reason === "validation") {
         validationFailures++;
-      } else {
+      } else if (result.reason === "unchanged") {
         duplicates++;
+      } else {
+        saveErrors.push({
+          url: dj.url,
+          error: result.error ?? result.reason ?? "Unknown save error",
+        });
       }
     } catch (error) {
       saveErrors.push({

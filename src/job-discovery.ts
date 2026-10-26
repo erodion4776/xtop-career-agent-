@@ -3,11 +3,6 @@ import { addJob } from "./tracker.js";
 
 // ─── Schemas ────────────────────────────────────────────────────────────────
 
-/**
- * Relaxed schema for initial parsing.  URL *format* is validated in a
- * separate step so that an empty or malformed URL string does not silently
- * discard an otherwise useful job record.
- */
 const JobSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
   title: z.string().min(1),
@@ -20,16 +15,11 @@ const JobSchema = z.object({
 
 type ParsedJob = z.infer<typeof JobSchema>;
 
-/** Internal representation with a guaranteed-valid URL and source tag. */
 interface TrackedJob extends ParsedJob {
   url: string;
   source: string;
 }
 
-/**
- * Remote OK schema — URL fields intentionally accept any string (or absent)
- * so that empty strings from the API do not fail validation.
- */
 const RemoteOkSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
   position: z.string().min(1),
@@ -61,7 +51,7 @@ const REMOTIVE_SOURCES = [
 
 const REMOTE_OK_URL = "https://remoteok.com/api";
 
-const USER_AGENT = "XTOP-Career-Agent/0.7";
+const USER_AGENT = "XTOP-Career-Agent/0.8";
 
 // ─── Utility helpers ────────────────────────────────────────────────────────
 
@@ -75,64 +65,59 @@ function isValidHttpUrl(value: string | undefined | null): value is string {
   }
 }
 
-/**
- * Truncate a description to `maxLen` characters without breaking mid-word
- * or leaving a dangling partial HTML tag.
- */
-function truncateDescription(text: string, maxLen = 19_000): string {
+function truncateDescription(text: string, maxLen = 19000): string {
   if (text.length <= maxLen) return text;
 
   let cut = text.slice(0, maxLen);
-
-  // Strip a trailing partial HTML tag (e.g. "<div class="foo")
   cut = cut.replace(/<[^>]*$/, "");
 
-  // Snap back to the nearest word boundary when doing so loses < 10 %
   const lastSpace = cut.lastIndexOf(" ");
   if (lastSpace > maxLen * 0.9) {
     cut = cut.slice(0, lastSpace);
   }
 
-  return cut + "…";
+  return cut + "\u2026";
 }
 
-/**
- * Fetch with bounded retries for transient 5xx / network errors.
- * 4xx responses (including 429) are returned immediately so the caller
- * can handle rate-limiting without wasting retries.
- *
- * AbortSignal.timeout() requires Node ≥ 17.3 — confirmed safe for this
- * project (Node 20+ on Render, @types/node ^22).
- */
 async function fetchWithRetry(
   url: string,
   init: RequestInit,
+  timeoutMs = 15000,
   maxRetries = 2,
 ): Promise<Response> {
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const res = await fetch(url, init);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-      // Never retry client errors or rate-limits
-      if (res.status === 429 || (res.status >= 400 && res.status < 500)) {
+    try {
+      const res = await fetch(url, {
+        ...init,
+        signal: controller.signal,
+      });
+
+      if (res.status === 429) return res;
+
+      if (res.status >= 400 && res.status < 500) {
         return res;
       }
-      if (res.ok) return res;
 
-      // 5xx — back off and retry
-      if (attempt < maxRetries) {
-        await delay(1_000 * (attempt + 1));
-        continue;
+      if (res.ok || attempt === maxRetries) {
+        return res;
       }
-      return res;
     } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      if (attempt < maxRetries) {
-        await delay(1_000 * (attempt + 1));
+      lastError =
+        err instanceof Error ? err : new Error(String(err));
+
+      if (attempt === maxRetries) {
+        throw lastError;
       }
+    } finally {
+      clearTimeout(timer);
     }
+
+    await delay(1000 * (attempt + 1));
   }
 
   throw lastError ?? new Error("fetch failed after retries");
@@ -142,15 +127,10 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// ─── Relevance & eligibility ────────────────────────────────────────────────
+// ─── Relevance and eligibility ──────────────────────────────────────────────
 
-/**
- * A job is relevant only when its title matches a recognised software-
- * engineering role.  Technology keywords alone (e.g. "Python" appearing
- * in "Product Manager – Python Team") are **not** sufficient.
- */
 function isRelevantRole(title: string): boolean {
-  const t = title.toLowerCase().replace(/[–—]/g, "-").trim();
+  const t = title.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
 
   const excluded =
     /\b(copywriter|writer|editor|sales|account executive|office assistant|administrative assistant|virtual assistant|service desk|help desk|customer support|customer service|technical support|support specialist|data annotator|video annotation|ai trainer|recruiter|marketing specialist|business development|project manager|product manager|product owner|scrum master|qa engineer|qa tester|tester|technical writer|ux designer|ui designer|graphic designer|data analyst|business analyst|human resources|talent acquisition|sourcer)\b/i;
@@ -163,25 +143,20 @@ function isRelevantRole(title: string): boolean {
   return developerRole.test(t);
 }
 
-/**
- * Conservative eligibility check for the `nigeria_eligible` database field.
- *
- * Returns `true` **only** when the location string explicitly mentions
- * Nigeria.  Broader terms like "Worldwide" or "Africa" do not confirm
- * eligibility and must not set this flag — they are surfaced separately
- * in the eligibility note so the user can verify manually.
- */
+function matchesTechStack(job: TrackedJob): boolean {
+  const haystack = (job.title + " " + job.description).toLowerCase();
+
+  return /\b(node\.?js|typescript|javascript|react|next\.?js|express|backend|back-end|full.?stack|supabase|api\b|apis\b|automation|rest\s*api|graphql)\b/i.test(
+    haystack,
+  );
+}
+
 function assessNigeriaEligibility(location: string): boolean {
   return /\bnigeria\b/i.test(location);
 }
 
-/**
- * Broader check used only for the human-readable eligibility note.
- * "Worldwide", "Anywhere", "Africa", etc. *may* include Nigeria but
- * require manual verification.
- */
 function mayIncludeNigeria(location: string): boolean {
-  const loc = location.toLowerCase().replace(/[–—]/g, "-").trim();
+  const loc = location.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
 
   return (
     /\bnigeria\b/.test(loc) ||
@@ -199,21 +174,21 @@ function eligibilityNote(job: TrackedJob): string {
 
   if (/\bnigeria\b/i.test(location)) {
     return (
-      `Nigeria is explicitly listed. ` +
-      `Verify work-authorisation requirements. Source: ${job.source}.`
+      "Nigeria is explicitly listed. " +
+      "Verify work-authorisation requirements. Source: " + job.source + "."
     );
   }
 
   if (mayIncludeNigeria(location)) {
     return (
-      `The listing says "${location}", which may include Nigeria. ` +
-      `Verify eligibility before applying. Source: ${job.source}.`
+      'The listing says "' + location + '", which may include Nigeria. ' +
+      "Verify eligibility before applying. Source: " + job.source + "."
     );
   }
 
   return (
-    `Nigeria eligibility is unconfirmed; listing location: "${location}". ` +
-    `Verify before applying. Source: ${job.source}.`
+    'Nigeria eligibility is unconfirmed; listing location: "' + location + '". ' +
+    "Verify before applying. Source: " + job.source + "."
   );
 }
 
@@ -258,17 +233,23 @@ async function fetchRemotive(source: {
   const jobs: TrackedJob[] = [];
 
   try {
-    const response = await fetchWithRetry(source.url, {
-      headers: { Accept: "application/json", "User-Agent": USER_AGENT },
-      signal: AbortSignal.timeout(15_000),
-    });
+    const response = await fetchWithRetry(
+      source.url,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": USER_AGENT,
+        },
+      },
+      15000,
+    );
 
     if (response.status === 429) {
       result.error = "HTTP 429 (rate limited)";
       return { result, jobs };
     }
     if (!response.ok) {
-      result.error = `HTTP ${response.status}`;
+      result.error = "HTTP " + response.status;
       return { result, jobs };
     }
 
@@ -293,13 +274,9 @@ async function fetchRemotive(source: {
       if (!parsed.success) continue;
 
       const data = parsed.data;
-
-      // Separate URL validation — a bad URL must not silently kill the record
       if (!isValidHttpUrl(data.url)) continue;
 
       result.valid++;
-
-      // Only collect sample titles from fully validated entries
       if (sampleTitles.length < 8) sampleTitles.push(data.title);
 
       if (!isRelevantRole(data.title)) continue;
@@ -332,17 +309,23 @@ async function fetchRemoteOk(): Promise<{
   const jobs: TrackedJob[] = [];
 
   try {
-    const response = await fetchWithRetry(REMOTE_OK_URL, {
-      headers: { Accept: "application/json", "User-Agent": USER_AGENT },
-      signal: AbortSignal.timeout(20_000),
-    });
+    const response = await fetchWithRetry(
+      REMOTE_OK_URL,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": USER_AGENT,
+        },
+      },
+      20000,
+    );
 
     if (response.status === 429) {
       result.error = "HTTP 429 (rate limited)";
       return { result, jobs };
     }
     if (!response.ok) {
-      result.error = `HTTP ${response.status}`;
+      result.error = "HTTP " + response.status;
       return { result, jobs };
     }
 
@@ -353,7 +336,6 @@ async function fetchRemoteOk(): Promise<{
       return { result, jobs };
     }
 
-    // First element is often a legal-notice object, not a job.
     const items = payload.filter(
       (item) => item && typeof item === "object" && "position" in item,
     );
@@ -367,13 +349,6 @@ async function fetchRemoteOk(): Promise<{
 
       const remote = parsed.data;
 
-      // ── URL resolution: never fabricate a URL ──────────────────────
-      // 1. Prefer the canonical Remote OK listing URL (hostname must be
-      //    remoteok.com) so we don't store a redirect or third-party link.
-      // 2. Fall back to apply_url as-is from the feed when it provides a
-      //    genuine application destination.
-      // 3. Skip the job entirely when neither is usable.  We never
-      //    construct a URL from the job ID.
       let listingUrl: string | undefined;
 
       if (isValidHttpUrl(remote.url)) {
@@ -390,7 +365,6 @@ async function fetchRemoteOk(): Promise<{
       if (!listingUrl) continue;
 
       result.valid++;
-
       if (sampleTitles.length < 8) sampleTitles.push(remote.position);
 
       if (!isRelevantRole(remote.position)) continue;
@@ -424,13 +398,10 @@ async function fetchRemoteOk(): Promise<{
 export async function discoverJobs() {
   const uniqueJobs = new Map<string, TrackedJob>();
 
-  // ── Fetch all sources concurrently ─────────────────────────────────
-  // Remotive requests are staggered by 1.5 s to reduce the chance of
-  // triggering HTTP 429 rate limits across the three endpoints.
   const remotivePromises = REMOTIVE_SOURCES.map(
     (source, i) =>
       new Promise<{ result: SourceResult; jobs: TrackedJob[] }>((resolve) =>
-        setTimeout(() => resolve(fetchRemotive(source)), i * 1_500),
+        setTimeout(() => resolve(fetchRemotive(source)), i * 1500),
       ),
   );
 
@@ -466,20 +437,30 @@ export async function discoverJobs() {
     }
   }
 
-  // ── Rank, persist, report ──────────────────────────────────────────
-
   const rankedJobs = [...uniqueJobs.values()].sort(
     (a, b) => relevanceScore(b) - relevanceScore(a),
   );
 
+  let techStackMatched = 0;
+  let nigeriaConfirmed = 0;
+  let nigeriaPotential = 0;
+
+  for (const job of rankedJobs) {
+    if (matchesTechStack(job)) techStackMatched++;
+
+    if (assessNigeriaEligibility(job.candidate_required_location)) {
+      nigeriaConfirmed++;
+    } else if (mayIncludeNigeria(job.candidate_required_location)) {
+      nigeriaPotential++;
+    }
+  }
+
   let saved = 0;
-  let skipped = 0;
-  let nigeriaEligible = 0;
+  let duplicates = 0;
+  let updated = 0;
   const saveErrors: Array<{ url: string; error: string }> = [];
 
   for (const job of rankedJobs) {
-    // Only explicitly-Nigerian locations set the boolean flag.
-    // "Worldwide" / "Africa" etc. are surfaced in the note, not the flag.
     const eligible = assessNigeriaEligibility(job.candidate_required_location);
 
     try {
@@ -499,9 +480,8 @@ export async function discoverJobs() {
 
       if (result) {
         saved++;
-        if (eligible) nigeriaEligible++;
       } else {
-        skipped++;
+        duplicates++;
       }
     } catch (error) {
       saveErrors.push({
@@ -519,9 +499,13 @@ export async function discoverJobs() {
     checkedSources: sourceResults.length,
     sourceResults,
     matched: rankedJobs.length,
+    techStackMatched,
     saved,
-    skipped,
-    nigeriaEligible,
+    duplicates,
+    updated,
+    skipped: duplicates,
+    nigeriaEligible: nigeriaConfirmed,
+    nigeriaPotential,
     sourceErrors: sourceResults
       .filter((s) => s.error)
       .map((s) => ({ source: s.source, error: s.error! })),

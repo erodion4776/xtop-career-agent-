@@ -51,7 +51,7 @@ const REMOTIVE_SOURCES = [
 
 const REMOTE_OK_URL = "https://remoteok.com/api";
 
-const USER_AGENT = "XTOP-Career-Agent/0.9";
+const USER_AGENT = "XTOP-Career-Agent/1.0";
 
 // ─── Utility helpers ────────────────────────────────────────────────────────
 
@@ -128,22 +128,33 @@ function delay(ms: number): Promise<void> {
   return new Promise(function (r) { setTimeout(r, ms); });
 }
 
-// ─── Relevance and eligibility ──────────────────────────────────────────────
+// ─── Relevance filtering ────────────────────────────────────────────────────
 
+/**
+ * A job is relevant ONLY when its title matches a recognised software
+ * engineering role. Technology keywords alone are not sufficient.
+ *
+ * The exclusion list runs first to catch titles like
+ * "Technical Writer - JavaScript" or "QA Engineer - React".
+ */
 function isRelevantRole(title: string): boolean {
   var t = title.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
 
   var excluded =
-    /\b(copywriter|writer|editor|sales|account executive|office assistant|administrative assistant|virtual assistant|service desk|help desk|customer support|customer service|technical support|support specialist|data annotator|video annotation|ai trainer|recruiter|marketing specialist|business development|project manager|product manager|product owner|scrum master|qa engineer|qa tester|tester|technical writer|ux designer|ui designer|graphic designer|data analyst|business analyst|human resources|talent acquisition|sourcer)\b/i;
+    /\b(copywriter|writer|editor|sales|account executive|office assistant|administrative assistant|virtual assistant|service desk|help desk|customer support|customer service|technical support|support specialist|data annotator|video annotation|ai trainer|recruiter|marketing specialist|business development|project manager|product manager|product owner|scrum master|qa engineer|qa tester|tester|technical writer|ux designer|ui designer|graphic designer|data analyst|business analyst|human resources|talent acquisition|sourcer|content strategist|seo specialist|community manager|operations manager|office manager|executive assistant|legal|compliance|finance|accounting|bookkeeper|payroll|procurement|logistics|supply chain)\b/i;
 
   if (excluded.test(t)) return false;
 
   var developerRole =
-    /\b(software developer|software engineer|web developer|web engineer|frontend developer|front-end developer|front end developer|frontend engineer|front-end engineer|front end engineer|backend developer|back-end developer|back end developer|backend engineer|back-end engineer|back end engineer|full.?stack developer|full.?stack engineer|mobile developer|mobile engineer|application developer|application engineer|api developer|api engineer|platform engineer|devops engineer|site reliability engineer|sre|programmer|automation developer|automation engineer|ai engineer|machine learning engineer|ml engineer|data engineer|cloud engineer|systems engineer|technical lead|tech lead|software architect|blockchain developer|blockchain engineer|embedded developer|embedded engineer|firmware engineer|security engineer|infrastructure engineer)\b/i;
+    /\b(software developer|software engineer|web developer|web engineer|frontend developer|front-end developer|front end developer|frontend engineer|front-end engineer|front end engineer|backend developer|back-end developer|back end developer|backend engineer|back-end engineer|back end engineer|full.?stack developer|full.?stack engineer|mobile developer|mobile engineer|application developer|application engineer|api developer|api engineer|platform engineer|devops engineer|site reliability engineer|sre|programmer|automation developer|automation engineer|ai engineer|machine learning engineer|ml engineer|data engineer|cloud engineer|systems engineer|technical lead|tech lead|software architect|blockchain developer|blockchain engineer|embedded developer|embedded engineer|firmware engineer|security engineer|infrastructure engineer|solutions architect|integration engineer|release engineer|build engineer)\b/i;
 
   return developerRole.test(t);
 }
 
+/**
+ * Checks whether a matched job aligns with the user's specific technology
+ * stack. Searches both title and description.
+ */
 function matchesTechStack(job: TrackedJob): boolean {
   var haystack = (job.title + " " + job.description).toLowerCase();
 
@@ -152,60 +163,124 @@ function matchesTechStack(job: TrackedJob): boolean {
   );
 }
 
+/**
+ * Relevance score weighted toward the user's preferred stack:
+ * Node.js, TypeScript, JavaScript, React, APIs, Supabase, automation,
+ * full-stack and backend development.
+ *
+ * Used for ranking only — not for filtering.
+ */
+function relevanceScore(job: TrackedJob): number {
+  var t = job.title.toLowerCase();
+  var haystack = (job.title + " " + job.description).toLowerCase();
+  var score = 0;
+
+  // Role type (title-based)
+  if (/\bsoftware developer\b|\bsoftware engineer\b/i.test(t)) score += 10;
+  if (/full.?stack/i.test(t)) score += 12;
+  if (/backend|back-end|back end/i.test(t)) score += 10;
+  if (/frontend|front-end|front end/i.test(t)) score += 7;
+  if (/mobile developer|mobile engineer/i.test(t)) score += 6;
+  if (/devops|platform engineer|sre|site reliability/i.test(t)) score += 5;
+
+  // User's preferred stack (title + description)
+  if (/\bnode\.?js\b/i.test(haystack)) score += 6;
+  if (/\btypescript\b/i.test(haystack)) score += 6;
+  if (/\bjavascript\b/i.test(haystack)) score += 4;
+  if (/\breact\b/i.test(haystack)) score += 4;
+  if (/\bsupabase\b/i.test(haystack)) score += 5;
+  if (/\bapi\b|\bapis\b|\brest\s*api\b|\bgraphql\b/i.test(haystack)) score += 4;
+  if (/\bautomation\b/i.test(haystack)) score += 4;
+  if (/\bexpress\b/i.test(haystack)) score += 3;
+  if (/\bnext\.?js\b/i.test(haystack)) score += 3;
+
+  // Other tech (title-based, lower weight)
+  if (/python/i.test(t)) score += 2;
+  if (/ai engineer|machine learning|ml engineer/i.test(t)) score += 2;
+  if (/cloud engineer|aws|gcp|azure/i.test(t)) score += 2;
+
+  // Seniority bonus
+  if (/senior|lead|staff|principal/i.test(t)) score += 1;
+
+  return score;
+}
+
+// ─── Nigeria eligibility ────────────────────────────────────────────────────
+
+/**
+ * Conservative check for the database boolean.
+ * Returns true ONLY for explicit Nigeria mentions.
+ */
 function assessNigeriaEligibility(location: string): boolean {
   return /\bnigeria\b/i.test(location);
 }
 
-function mayIncludeNigeria(location: string): boolean {
+/**
+ * Four-tier eligibility classification for diagnostics and notes.
+ *
+ * - confirmed:  explicit "Nigeria" mention
+ * - potential:  "Worldwide", "Anywhere", "Global", "Africa", etc.
+ * - restricted: specific countries/regions listed without any broad term
+ * - unknown:    empty, "Remote", "Not specified", or unrecognised
+ */
+function nigeriaCategory(
+  location: string,
+): "confirmed" | "potential" | "restricted" | "unknown" {
   var loc = location.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
 
-  return (
-    /\bnigeria\b/.test(loc) ||
+  if (/\bnigeria\b/.test(loc)) return "confirmed";
+
+  if (
     /\bworldwide\b/.test(loc) ||
     /\banywhere\b/.test(loc) ||
     /\bglobal(?:ly)?\b/.test(loc) ||
     /\ball countries\b/.test(loc) ||
     /\bafrica\b/.test(loc) ||
-    /\bafrican countries\b/.test(loc)
-  );
+    /\bafrican countries\b/.test(loc) ||
+    /\bemerging markets\b/.test(loc) ||
+    /\bemea\b/.test(loc)
+  ) {
+    return "potential";
+  }
+
+  var specificCountry =
+    /\b(us|usa|united states|america|uk|united kingdom|britain|england|europe|eu|canada|australia|germany|france|netherlands|sweden|norway|denmark|finland|switzerland|austria|belgium|ireland|spain|italy|portugal|poland|czech|romania|brazil|mexico|india|singapore|japan|south korea|new zealand|israel|uae|dubai|saudi|qatar)\b/i;
+
+  if (specificCountry.test(loc)) return "restricted";
+
+  return "unknown";
 }
 
 function eligibilityNote(job: TrackedJob): string {
   var location = job.candidate_required_location.trim();
+  var cat = nigeriaCategory(location);
 
-  if (/\bnigeria\b/i.test(location)) {
+  if (cat === "confirmed") {
     return (
       "Nigeria is explicitly listed. " +
       "Verify work-authorisation requirements. Provider: " + job.source + "."
     );
   }
 
-  if (mayIncludeNigeria(location)) {
+  if (cat === "potential") {
     return (
       "The listing says \"" + location + "\", which may include Nigeria. " +
       "Verify eligibility before applying. Provider: " + job.source + "."
     );
   }
 
+  if (cat === "restricted") {
+    return (
+      "The listing says \"" + location + "\", which appears to restrict " +
+      "applicants to specific countries. Nigeria is not mentioned. " +
+      "Provider: " + job.source + "."
+    );
+  }
+
   return (
-    "Nigeria eligibility is unconfirmed; listing location: \"" + location + "\". " +
+    "Nigeria eligibility is unknown; listing location: \"" + location + "\". " +
     "Verify before applying. Provider: " + job.source + "."
   );
-}
-
-function relevanceScore(job: TrackedJob): number {
-  var t = job.title.toLowerCase();
-  var score = 0;
-
-  if (/\bsoftware developer\b|\bsoftware engineer\b/i.test(t)) score += 10;
-  if (/full.?stack/i.test(t)) score += 9;
-  if (/backend|back-end|back end/i.test(t)) score += 8;
-  if (/frontend|front-end|front end/i.test(t)) score += 7;
-  if (/typescript|node\.?js|javascript|python/i.test(t)) score += 5;
-  if (/api|automation|devops|platform|ai engineer|machine learning/i.test(t)) score += 3;
-  if (/senior|lead|staff|principal/i.test(t)) score += 1;
-
-  return score;
 }
 
 // ─── Diagnostics type ───────────────────────────────────────────────────────
@@ -279,11 +354,14 @@ async function fetchRemotive(source: {
       if (!isValidHttpUrl(data.url)) continue;
 
       result.valid++;
-      if (sampleTitles.length < 8) sampleTitles.push(data.title);
 
       if (!isRelevantRole(data.title)) continue;
 
       result.matched++;
+
+      // Sample titles collected AFTER relevance filtering
+      if (sampleTitles.length < 8) sampleTitles.push(data.title);
+
       jobs.push({ ...data, url: data.url, source: source.name });
     }
 
@@ -368,11 +446,14 @@ async function fetchRemoteOk(): Promise<{
       if (!listingUrl) continue;
 
       result.valid++;
-      if (sampleTitles.length < 8) sampleTitles.push(remote.position);
 
       if (!isRelevantRole(remote.position)) continue;
 
       result.matched++;
+
+      // Sample titles collected AFTER relevance filtering
+      if (sampleTitles.length < 8) sampleTitles.push(remote.position);
+
       jobs.push({
         id: remote.id,
         title: remote.position,
@@ -449,20 +530,26 @@ export async function discoverJobs() {
     function (a, b) { return relevanceScore(b) - relevanceScore(a); },
   );
 
+  // ── Classify every matched job ─────────────────────────────────────
+
   var techStackMatched = 0;
   var nigeriaConfirmed = 0;
   var nigeriaPotential = 0;
+  var nigeriaRestricted = 0;
+  var nigeriaUnknown = 0;
 
   for (var k = 0; k < rankedJobs.length; k++) {
     var rj = rankedJobs[k];
     if (matchesTechStack(rj)) techStackMatched++;
 
-    if (assessNigeriaEligibility(rj.candidate_required_location)) {
-      nigeriaConfirmed++;
-    } else if (mayIncludeNigeria(rj.candidate_required_location)) {
-      nigeriaPotential++;
-    }
+    var cat = nigeriaCategory(rj.candidate_required_location);
+    if (cat === "confirmed") nigeriaConfirmed++;
+    else if (cat === "potential") nigeriaPotential++;
+    else if (cat === "restricted") nigeriaRestricted++;
+    else nigeriaUnknown++;
   }
+
+  // ── Persist ────────────────────────────────────────────────────────
 
   var saved = 0;
   var updated = 0;
@@ -475,9 +562,6 @@ export async function discoverJobs() {
     var eligible = assessNigeriaEligibility(dj.candidate_required_location);
 
     try {
-      // The database "source" column uses the fixed enum value "job_board".
-      // The actual provider name (e.g. "Remotive TypeScript", "Remote OK")
-      // is preserved in the notes field via eligibilityNote().
       var result = await addJob({
         company: dj.company_name,
         title: dj.title,
@@ -530,6 +614,8 @@ export async function discoverJobs() {
     skipped: duplicates,
     nigeriaEligible: nigeriaConfirmed,
     nigeriaPotential: nigeriaPotential,
+    nigeriaRestricted: nigeriaRestricted,
+    nigeriaUnknown: nigeriaUnknown,
     sourceErrors: sourceResults
       .filter(function (s) { return !!s.error; })
       .map(function (s) { return { source: s.source, error: s.error! }; }),

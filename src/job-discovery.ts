@@ -1,6 +1,7 @@
 
 import { z } from "zod";
 import { addJob } from "./tracker.js";
+import { assessJobs } from "./gemini.js";
 
 const JobSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -72,8 +73,11 @@ const REMOTIVE_SOURCES = [
 const REMOTE_OK_URL = "https://remoteok.com/api";
 const USER_AGENT = "XTOP-Career-Agent/1.4";
 
-function isValidHttpUrl(value: string | undefined | null): value is string {
+function isValidHttpUrl(
+  value: string | undefined | null
+): value is string {
   if (!value?.trim()) return false;
+
   try {
     const parsed = new URL(value);
     return parsed.protocol === "http:" || parsed.protocol === "https:";
@@ -84,9 +88,14 @@ function isValidHttpUrl(value: string | undefined | null): value is string {
 
 function truncateDescription(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
+
   let cut = text.slice(0, maxLen).replace(/<[^>]*$/, "");
   const lastSpace = cut.lastIndexOf(" ");
-  if (lastSpace > maxLen * 0.9) cut = cut.slice(0, lastSpace);
+
+  if (lastSpace > maxLen * 0.9) {
+    cut = cut.slice(0, lastSpace);
+  }
+
   return cut + "...";
 }
 
@@ -98,7 +107,7 @@ async function fetchWithRetry(
   url: string,
   init: RequestInit,
   timeoutMs: number,
-  maxRetries = 2,
+  maxRetries = 2
 ): Promise<Response> {
   let lastError: Error | undefined;
 
@@ -116,7 +125,9 @@ async function fetchWithRetry(
       if (response.status >= 400 && response.status < 500) return response;
       if (response.ok || attempt === maxRetries) return response;
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
+      lastError =
+        error instanceof Error ? error : new Error(String(error));
+
       if (attempt === maxRetries) throw lastError;
     } finally {
       clearTimeout(timer);
@@ -129,7 +140,10 @@ async function fetchWithRetry(
 }
 
 function isRelevantRole(title: string): boolean {
-  const t = title.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
+  const t = title
+    .toLowerCase()
+    .replace(/[\u2013\u2014]/g, "-")
+    .trim();
 
   const excluded =
     /\b(copywriter|writer|editor|sales|account executive|office assistant|administrative assistant|virtual assistant|service desk|help desk|customer support|customer service|technical support|support specialist|data annotator|video annotation|ai trainer|recruiter|marketing specialist|business development|project manager|product manager|product owner|scrum master|qa engineer|qa tester|tester|technical writer|ux designer|ui designer|graphic designer|data analyst|business analyst|human resources|talent acquisition|sourcer|content strategist|seo specialist|community manager|operations manager|office manager|executive assistant|legal|compliance|finance|accounting|bookkeeper|payroll|procurement|logistics|supply chain)\b/i;
@@ -141,17 +155,24 @@ function isRelevantRole(title: string): boolean {
 
 function matchesTechStack(job: TrackedJob): boolean {
   const text = `${job.title} ${job.description}`.toLowerCase();
+
   return /\b(node\.?js|typescript|javascript|react|next\.?js|express|backend|back-end|full.?stack|supabase|api\b|apis\b|automation|rest\s*api|graphql)\b/i.test(text);
 }
 
-function experienceLevel(job: TrackedJob): "junior" | "mid" | "senior" | "staff" | "unknown" {
-  const text = `${job.title} ${job.description.slice(0, 5000)}`.toLowerCase();
+function experienceLevel(
+  job: TrackedJob
+): "junior" | "mid" | "senior" | "staff" | "unknown" {
+  const text =
+    `${job.title} ${job.description.slice(0, 5000)}`.toLowerCase();
 
   if (/\b(staff|principal|distinguished|fellow|vp of engineering|chief technology)\b/i.test(job.title)) return "staff";
   if (/\b(senior|sr\.?|lead|head of|director|architect)\b/i.test(job.title)) return "senior";
   if (/\b(junior|jr\.?|entry.level|graduate|associate|intern|internship)\b/i.test(job.title)) return "junior";
 
-  const years = text.match(/\b(\d{1,2})\+?\s+years?\s+(?:of\s+)?experience\b/i);
+  const years = text.match(
+    /\b(\d{1,2})\+?\s+years?\s+(?:of\s+)?experience\b/i
+  );
+
   if (years) {
     const count = Number(years[1]);
     if (count >= 7) return "staff";
@@ -160,12 +181,18 @@ function experienceLevel(job: TrackedJob): "junior" | "mid" | "senior" | "staff"
     return "mid";
   }
 
-  if (/\b(mid.level|midlevel|intermediate)\b/i.test(job.title)) return "mid";
+  if (/\b(mid.level|midlevel|intermediate)\b/i.test(job.title)) {
+    return "mid";
+  }
+
   return "unknown";
 }
 
 function nigeriaCategory(location: string): Eligibility {
-  const loc = location.toLowerCase().replace(/[\u2013\u2014]/g, "-").trim();
+  const loc = location
+    .toLowerCase()
+    .replace(/[\u2013\u2014]/g, "-")
+    .trim();
 
   if (/\bnigeria\b/.test(loc)) return "confirmed";
 
@@ -281,29 +308,48 @@ function fitReason(job: TrackedJob, score: number): string {
   return details.join(" ");
 }
 
-async function fetchRemotive(source: {
-  name: string;
-  url: string;
-}): Promise<{ result: SourceResult; jobs: TrackedJob[] }> {
-  const result: SourceResult = { source: source.name, returned: 0, valid: 0, matched: 0 };
+async function fetchRemotive(
+  source: { name: string; url: string }
+): Promise<{ result: SourceResult; jobs: TrackedJob[] }> {
+  const result: SourceResult = {
+    source: source.name,
+    returned: 0,
+    valid: 0,
+    matched: 0,
+  };
+
   const jobs: TrackedJob[] = [];
 
   try {
-    const response = await fetchWithRetry(source.url, {
-      headers: { Accept: "application/json", "User-Agent": USER_AGENT },
-    }, 15000);
+    const response = await fetchWithRetry(
+      source.url,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": USER_AGENT,
+        },
+      },
+      15000
+    );
 
     if (response.status === 429) {
       result.error = "HTTP 429 (rate limited)";
       return { result, jobs };
     }
+
     if (!response.ok) {
       result.error = `HTTP ${response.status}`;
       return { result, jobs };
     }
 
     const payload: unknown = await response.json();
-    if (!payload || typeof payload !== "object" || !("jobs" in payload) || !Array.isArray((payload as { jobs: unknown[] }).jobs)) {
+
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      !("jobs" in payload) ||
+      !Array.isArray((payload as { jobs: unknown[] }).jobs)
+    ) {
       result.error = "Unexpected Remotive response format";
       return { result, jobs };
     }
@@ -314,50 +360,85 @@ async function fetchRemotive(source: {
 
     for (const item of rawJobs) {
       const parsed = JobSchema.safeParse(item);
+
       if (!parsed.success || !isValidHttpUrl(parsed.data.url)) continue;
 
       result.valid++;
       if (!isRelevantRole(parsed.data.title)) continue;
 
       result.matched++;
-      if (sampleTitles.length < 8) sampleTitles.push(parsed.data.title);
 
-      jobs.push({ ...parsed.data, url: parsed.data.url, source: source.name });
+      if (sampleTitles.length < 8) {
+        sampleTitles.push(parsed.data.title);
+      }
+
+      jobs.push({
+        ...parsed.data,
+        url: parsed.data.url,
+        source: source.name,
+      });
     }
 
     result.sampleTitles = sampleTitles;
   } catch (error) {
-    result.error = error instanceof Error ? error.message.slice(0, 200) : "Unknown source error";
+    result.error =
+      error instanceof Error
+        ? error.message.slice(0, 200)
+        : "Unknown source error";
   }
 
   return { result, jobs };
 }
 
-async function fetchRemoteOk(): Promise<{ result: SourceResult; jobs: TrackedJob[] }> {
-  const result: SourceResult = { source: "Remote OK", returned: 0, valid: 0, matched: 0 };
+async function fetchRemoteOk(): Promise<{
+  result: SourceResult;
+  jobs: TrackedJob[];
+}> {
+  const result: SourceResult = {
+    source: "Remote OK",
+    returned: 0,
+    valid: 0,
+    matched: 0,
+  };
+
   const jobs: TrackedJob[] = [];
 
   try {
-    const response = await fetchWithRetry(REMOTE_OK_URL, {
-      headers: { Accept: "application/json", "User-Agent": USER_AGENT },
-    }, 20000);
+    const response = await fetchWithRetry(
+      REMOTE_OK_URL,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": USER_AGENT,
+        },
+      },
+      20000
+    );
 
     if (response.status === 429) {
       result.error = "HTTP 429 (rate limited)";
       return { result, jobs };
     }
+
     if (!response.ok) {
       result.error = `HTTP ${response.status}`;
       return { result, jobs };
     }
 
     const payload: unknown = await response.json();
+
     if (!Array.isArray(payload)) {
       result.error = "Expected a JSON array";
       return { result, jobs };
     }
 
-    const items = payload.filter(item => item && typeof item === "object" && "position" in item);
+    const items = payload.filter(
+      item =>
+        item &&
+        typeof item === "object" &&
+        "position" in item
+    );
+
     result.returned = items.length;
     const sampleTitles: string[] = [];
 
@@ -370,17 +451,29 @@ async function fetchRemoteOk(): Promise<{ result: SourceResult; jobs: TrackedJob
 
       if (isValidHttpUrl(remote.url)) {
         const hostname = new URL(remote.url).hostname.toLowerCase();
-        if (hostname === "remoteok.com" || hostname === "www.remoteok.com") listingUrl = remote.url;
+
+        if (
+          hostname === "remoteok.com" ||
+          hostname === "www.remoteok.com"
+        ) {
+          listingUrl = remote.url;
+        }
       }
 
-      if (!listingUrl && isValidHttpUrl(remote.apply_url)) listingUrl = remote.apply_url;
+      if (!listingUrl && isValidHttpUrl(remote.apply_url)) {
+        listingUrl = remote.apply_url;
+      }
+
       if (!listingUrl) continue;
 
       result.valid++;
       if (!isRelevantRole(remote.position)) continue;
 
       result.matched++;
-      if (sampleTitles.length < 8) sampleTitles.push(remote.position);
+
+      if (sampleTitles.length < 8) {
+        sampleTitles.push(remote.position);
+      }
 
       jobs.push({
         id: remote.id,
@@ -396,7 +489,10 @@ async function fetchRemoteOk(): Promise<{ result: SourceResult; jobs: TrackedJob
 
     result.sampleTitles = sampleTitles;
   } catch (error) {
-    result.error = error instanceof Error ? error.message.slice(0, 200) : "Unknown source error";
+    result.error =
+      error instanceof Error
+        ? error.message.slice(0, 200)
+        : "Unknown source error";
   }
 
   return { result, jobs };
@@ -407,11 +503,18 @@ export async function discoverJobs() {
 
   const remotivePromises = REMOTIVE_SOURCES.map((source, index) =>
     new Promise<{ result: SourceResult; jobs: TrackedJob[] }>(resolve => {
-      setTimeout(() => resolve(fetchRemotive(source)), index * 1500);
-    }),
+      setTimeout(
+        () => resolve(fetchRemotive(source)),
+        index * 1500
+      );
+    })
   );
 
-  const outcomes = await Promise.allSettled([...remotivePromises, fetchRemoteOk()]);
+  const outcomes = await Promise.allSettled([
+    ...remotivePromises,
+    fetchRemoteOk(),
+  ]);
+
   const sourceResults: SourceResult[] = [];
 
   for (const outcome of outcomes) {
@@ -421,19 +524,95 @@ export async function discoverJobs() {
         returned: 0,
         valid: 0,
         matched: 0,
-        error: outcome.reason instanceof Error ? outcome.reason.message.slice(0, 200) : "Unhandled promise rejection",
+        error:
+          outcome.reason instanceof Error
+            ? outcome.reason.message.slice(0, 200)
+            : "Unhandled promise rejection",
       });
+
       continue;
     }
 
     sourceResults.push(outcome.value.result);
+
     for (const job of outcome.value.jobs) {
       const existing = uniqueJobs.get(job.url);
-      if (!existing || relevanceScore(job) > relevanceScore(existing)) uniqueJobs.set(job.url, job);
+
+      if (
+        !existing ||
+        relevanceScore(job) > relevanceScore(existing)
+      ) {
+        uniqueJobs.set(job.url, job);
+      }
     }
   }
 
-  const rankedJobs = [...uniqueJobs.values()].sort((a, b) => relevanceScore(b) - relevanceScore(a));
+  const candidateJobs = [...uniqueJobs.values()];
+
+  // Preserve deterministic rule-based scores as a fallback.
+  const ruleScores = new Map(
+    candidateJobs.map(job => [job.url, relevanceScore(job)])
+  );
+
+  // Gemini uses the job URL as its stable ID. This avoids
+  // conflicts between numeric IDs from different job boards.
+  let geminiAssessments = new Map<
+    string,
+    { score: number; reason: string; skills?: string[] }
+  >();
+
+  try {
+    geminiAssessments = await assessJobs(
+      candidateJobs.map(job => ({
+        id: job.url,
+        title: job.title,
+        company: job.company_name,
+        location: job.candidate_required_location,
+        description: job.description,
+        url: job.url,
+      }))
+    );
+  } catch (error) {
+    console.warn(
+      "[Discovery] Gemini unavailable; using rule-based scores:",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+
+  function finalScore(job: TrackedJob): number {
+    const fallback =
+      ruleScores.get(job.url) ?? relevanceScore(job);
+
+    const assessment = geminiAssessments.get(job.url);
+
+    if (
+      !assessment ||
+      !Number.isFinite(assessment.score)
+    ) {
+      return fallback;
+    }
+
+    // Keep the existing score influential because it includes
+    // Nigeria eligibility and experience-level signals.
+    return Math.round(
+      fallback * 0.6 + assessment.score * 0.4
+    );
+  }
+
+  function finalReason(job: TrackedJob, score: number): string {
+    const assessment = geminiAssessments.get(job.url);
+    const fallbackReason = fitReason(job, score);
+
+    if (!assessment?.reason.trim()) {
+      return fallbackReason;
+    }
+
+    return `${assessment.reason.trim()} ${fallbackReason}`;
+  }
+
+  const rankedJobs = [...candidateJobs].sort(
+    (a, b) => finalScore(b) - finalScore(a)
+  );
 
   let techStackMatched = 0;
   let nigeriaConfirmed = 0;
@@ -444,37 +623,43 @@ export async function discoverJobs() {
   let mediumSuitability = 0;
   let lowSuitability = 0;
 
-  const topJobs: TopJob[] = rankedJobs.map(job => {
-    const score = relevanceScore(job);
-    const tier = suitabilityTier(score);
-    const eligibility = nigeriaCategory(job.candidate_required_location);
+  const topJobs: TopJob[] = rankedJobs
+    .map(job => {
+      const score = finalScore(job);
+      const tier = suitabilityTier(score);
+      const eligibility = nigeriaCategory(
+        job.candidate_required_location
+      );
 
-    if (matchesTechStack(job)) techStackMatched++;
-    if (eligibility === "confirmed") nigeriaConfirmed++;
-    else if (eligibility === "potential") nigeriaPotential++;
-    else if (eligibility === "restricted") nigeriaRestricted++;
-    else nigeriaUnknown++;
+      if (matchesTechStack(job)) techStackMatched++;
 
-    if (tier === "high") highSuitability++;
-    else if (tier === "medium") mediumSuitability++;
-    else lowSuitability++;
+      if (eligibility === "confirmed") nigeriaConfirmed++;
+      else if (eligibility === "potential") nigeriaPotential++;
+      else if (eligibility === "restricted") nigeriaRestricted++;
+      else nigeriaUnknown++;
 
-    return {
-      title: job.title,
-      company: job.company_name,
-      location: job.candidate_required_location,
-      score,
-      tier,
-      eligibility,
-      url: job.url,
-      reason: fitReason(job, score),
-    };
-  }).slice(0, 10);
+      if (tier === "high") highSuitability++;
+      else if (tier === "medium") mediumSuitability++;
+      else lowSuitability++;
+
+      return {
+        title: job.title,
+        company: job.company_name,
+        location: job.candidate_required_location,
+        score,
+        tier,
+        eligibility,
+        url: job.url,
+        reason: finalReason(job, score),
+      };
+    })
+    .slice(0, 10);
 
   let saved = 0;
   let updated = 0;
   let duplicates = 0;
   let validationFailures = 0;
+
   const saveErrors: Array<{ url: string; error: string }> = [];
 
   for (const job of rankedJobs) {
@@ -487,7 +672,9 @@ export async function discoverJobs() {
         source: "job_board",
         employment_type: job.job_type,
         remote: true,
-        nigeria_eligible: assessNigeriaEligibility(job.candidate_required_location),
+        nigeria_eligible: assessNigeriaEligibility(
+          job.candidate_required_location
+        ),
         description: truncateDescription(job.description, 19000),
         status: "discovered",
         notes: eligibilityNote(job),
@@ -497,14 +684,22 @@ export async function discoverJobs() {
       else if (result.updated) updated++;
       else if (result.reason === "validation") validationFailures++;
       else if (result.reason === "unchanged") duplicates++;
-      else saveErrors.push({
-        url: job.url,
-        error: result.error ?? result.reason ?? "Unknown save error",
-      });
+      else {
+        saveErrors.push({
+          url: job.url,
+          error:
+            result.error ??
+            result.reason ??
+            "Unknown save error",
+        });
+      }
     } catch (error) {
       saveErrors.push({
         url: job.url,
-        error: error instanceof Error ? error.message.slice(0, 200) : "Unknown database error",
+        error:
+          error instanceof Error
+            ? error.message.slice(0, 200)
+            : "Unknown database error",
       });
     }
   }
@@ -528,10 +723,12 @@ export async function discoverJobs() {
     mediumSuitability,
     lowSuitability,
     topJobs,
-    sourceErrors: sourceResults.filter(source => !!source.error).map(source => ({
-      source: source.source,
-      error: source.error!,
-    })),
+    sourceErrors: sourceResults
+      .filter(source => !!source.error)
+      .map(source => ({
+        source: source.source,
+        error: source.error!,
+      })),
     saveFailures: saveErrors.length,
     saveErrors: saveErrors.slice(0, 5),
   };

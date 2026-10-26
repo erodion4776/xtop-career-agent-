@@ -12,9 +12,9 @@
       --border: #2a3850;
       --text: #edf3ff;
       --muted: #9eacc3;
-      --accent: #4ade80;
+      --green: #4ade80;
       --blue: #60a5fa;
-      --danger: #f87171;
+      --red: #f87171;
     }* { box-sizing: border-box; }
 
 body {
@@ -25,20 +25,13 @@ body {
 }
 
 header {
-  padding: 25px 18px;
+  padding: 24px 18px;
   background: #101827;
   border-bottom: 1px solid var(--border);
 }
 
-header h1 {
-  margin: 0 0 5px;
-  font-size: 25px;
-}
-
-header p, .muted {
-  color: var(--muted);
-  margin: 0;
-}
+header h1 { margin: 0 0 5px; font-size: 25px; }
+header p { color: var(--muted); margin: 0; }
 
 main {
   width: min(900px, 100%);
@@ -55,6 +48,7 @@ section {
 }
 
 h2 { font-size: 18px; margin: 0 0 12px; }
+.muted { color: var(--muted); }
 
 input {
   width: 100%;
@@ -62,7 +56,7 @@ input {
   margin: 8px 0 12px;
   border-radius: 9px;
   border: 1px solid var(--border);
-  background: #0b1120;
+  background: var(--bg);
   color: white;
   font-size: 15px;
 }
@@ -92,41 +86,29 @@ button.primary {
 
 button.blue {
   background: #1d4ed8;
-  border-color: #60a5fa;
+  border-color: var(--blue);
 }
 
-button:disabled {
-  opacity: .55;
-  cursor: wait;
-}
+button:disabled { opacity: .55; cursor: wait; }
 
 .status {
-  padding: 10px;
-  border-radius: 8px;
-  background: #0b1120;
-  color: var(--muted);
-  overflow-wrap: anywhere;
+  padding: 12px;
+  border-radius: 9px;
+  background: var(--bg);
+  border: 1px solid var(--border);
   margin-top: 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .job {
-  padding: 13px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--border);
 }
 
 .job:last-child { border-bottom: 0; }
-
-.job h3 {
-  margin: 0 0 4px;
-  font-size: 16px;
-}
-
-.job p {
-  margin: 4px 0;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-
+.job h3 { margin: 0 0 4px; font-size: 16px; }
+.job p { margin: 4px 0; color: var(--muted); overflow-wrap: anywhere; }
 a { color: var(--blue); }
 
 .pill {
@@ -136,6 +118,19 @@ a { color: var(--blue); }
   padding: 2px 8px;
   font-size: 12px;
   margin-top: 5px;
+}
+
+.good { color: var(--green); }
+.bad { color: var(--red); }
+
+details { margin-top: 12px; }
+summary { cursor: pointer; color: var(--blue); }
+
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.5 ui-monospace, monospace;
+  color: #dbeafe;
 }
 
 footer {
@@ -156,13 +151,13 @@ footer {
   <header>
     <h1>XTOP Career Agent</h1>
     <p>Remote jobs, contracts, Gmail and application tracking.</p>
-    <p style="margin-top:10px;color:#4ade80">● Server dashboard</p>
+    <p id="serverIndicator" style="margin-top:10px">● Checking server…</p>
   </header>  <main>
     <section>
       <h2>Secure access</h2>
       <p class="muted">
-        Enter your AGENT_API_KEY from Render. The key is kept
-        in this page's memory and is not saved to browser storage.
+        Enter your AGENT_API_KEY from Render. It stays in page memory
+        and is not saved to browser storage.
       </p>  <input
     id="apiKey"
     type="password"
@@ -184,8 +179,8 @@ footer {
 <section>
   <h2>Agent controls</h2>
   <p class="muted">
-    Discover remote software roles, check your database,
-    and manage saved job leads.
+    Discover remote software roles, check the database, test Gmail,
+    and load saved job leads.
   </p>
 
   <div class="buttons">
@@ -193,19 +188,22 @@ footer {
     <button id="dbBtn">Check database</button>
     <button id="emailBtn">Send test email</button>
     <button id="loadBtn">Load job leads</button>
-    <button class="primary" id="discoverBtn">
-      Discover jobs
-    </button>
+    <button class="primary" id="discoverBtn">Discover jobs</button>
   </div>
 
   <div id="discoveryStatus" class="status" aria-live="polite">
     Ready. Connect the dashboard to begin.
   </div>
 
-  <p class="muted" style="margin-top:10px;font-size:13px">
-    Test email is sent only to your configured GMAIL_ALLOWED_EMAIL.
-    Job discovery checks configured public sources; verify each
-    job's country eligibility before applying.
+  <details>
+    <summary>View full discovery diagnostics</summary>
+    <pre id="diagnostics">No discovery run yet.</pre>
+  </details>
+
+  <p class="muted" style="margin-top:12px;font-size:13px">
+    Job discovery retrieves listings from configured public sources.
+    Verify location eligibility and application deadlines before applying.
+    Test email is sent only to GMAIL_ALLOWED_EMAIL.
   </p>
 </section>
 
@@ -238,7 +236,7 @@ footer {
           new Date().toLocaleTimeString() + " — " + message;
       }
 
-      function status(message) {
+      function setStatus(message) {
         $("discoveryStatus").textContent = message;
       }
 
@@ -251,7 +249,7 @@ footer {
 
       async function request(path, options = {}, authenticated = true) {
         const headers = {
-          "Accept": "application/json",
+          Accept: "application/json",
           ...(options.headers || {})
         };
 
@@ -283,18 +281,19 @@ footer {
       function renderJobs(jobs) {
         const list = $("jobsList");
         list.replaceChildren();
+
         $("jobCount").textContent =
           `${jobs.length} job lead${jobs.length === 1 ? "" : "s"} returned`;
 
-        if (!jobs.length) {
+        if (jobs.length === 0) {
           const empty = document.createElement("p");
           empty.className = "muted";
-          empty.textContent = "No job leads saved yet. Try Discover jobs.";
+          empty.textContent = "No jobs saved yet. Try Discover jobs.";
           list.appendChild(empty);
           return;
         }
 
-        jobs.forEach((job) => {
+        for (const job of jobs) {
           const item = document.createElement("article");
           item.className = "job";
 
@@ -304,58 +303,52 @@ footer {
 
           const company = document.createElement("p");
           company.textContent =
-            `${job.company || "Company not listed"} · ${job.location || "Location not listed"}`;
+            `${job.company || "Company not listed"} · ${job.location || "Location unknown"}`;
           item.appendChild(company);
 
-          const details = document.createElement("p");
-          details.textContent =
-            `Status: ${job.status || "discovered"} · Source: ${job.source || "unknown"}`;
-          item.appendChild(details);
+          const status = document.createElement("p");
+          status.textContent =
+            `Application status: ${job.status || "discovered"}`;
+          item.appendChild(status);
 
-          if (job.employment_type) {
-            const type = document.createElement("span");
-            type.className = "pill";
-            type.textContent = job.employment_type;
-            item.appendChild(type);
-          }
+          const eligibility = document.createElement("p");
+          eligibility.textContent = job.nigeria_eligible
+            ? "Nigeria eligibility: indicated; verify listing"
+            : "Nigeria eligibility: unconfirmed";
+          item.appendChild(eligibility);
 
           if (job.url) {
             try {
-              const parsedUrl = new URL(job.url);
-              if (parsedUrl.protocol === "https:" ||
-                  parsedUrl.protocol === "http:") {
-                const link = document.createElement("p");
-                const anchor = document.createElement("a");
-                anchor.href = parsedUrl.href;
-                anchor.target = "_blank";
-                anchor.rel = "noopener noreferrer";
-                anchor.textContent = "View job listing ↗";
-                link.appendChild(anchor);
+              const url = new URL(job.url);
+              if (url.protocol === "https:" || url.protocol === "http:") {
+                const link = document.createElement("a");
+                link.href = url.href;
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                link.textContent = "Open job listing ↗";
                 item.appendChild(link);
               }
-            } catch (_) {
-              // Do not render an invalid job URL.
-            }
+            } catch (_) {}
           }
 
           list.appendChild(item);
-        });
+        }
       }
 
       async function run(label, task) {
         if (busy) return;
         setBusy(true);
-        status(label + "…");
+        setStatus(label + "…");
         log(label + " started.");
 
         try {
           const result = await task();
-          status(typeof result === "string"
+          setStatus(typeof result === "string"
             ? result
             : JSON.stringify(result, null, 2));
           log(label + " completed.");
         } catch (error) {
-          status("Error: " + (error.message || "Request failed."));
+          setStatus("Error: " + (error.message || "Request failed."));
           log(label + " failed: " + (error.message || "Unknown error."));
         } finally {
           setBusy(false);
@@ -363,24 +356,22 @@ footer {
       }
 
       $("connectBtn").addEventListener("click", async () => {
-        const candidate = $("apiKey").value.trim();
+        if (busy) return;
 
+        const candidate = $("apiKey").value.trim();
         if (!candidate) {
           $("connectionStatus").textContent =
             "Enter your AGENT_API_KEY first.";
           return;
         }
 
-        if (busy) return;
         setBusy(true);
-
         try {
           const response = await fetch("/api/db-check", {
             headers: { "x-agent-key": candidate }
           });
 
           const data = await response.json();
-
           if (!response.ok) {
             throw new Error(data.error || "Could not connect.");
           }
@@ -388,12 +379,11 @@ footer {
           apiKey = candidate;
           $("connectionStatus").textContent =
             "Connected. Supabase is reachable.";
-          log("Dashboard connected successfully.");
+          log("Dashboard connected.");
         } catch (error) {
           apiKey = "";
           $("connectionStatus").textContent =
             "Connection failed: " + error.message;
-          log("Dashboard connection failed.");
         } finally {
           setBusy(false);
         }
@@ -402,31 +392,32 @@ footer {
       $("disconnectBtn").addEventListener("click", () => {
         apiKey = "";
         $("apiKey").value = "";
-        $("connectionStatus").textContent = "Disconnected.";
-        status("Connect the dashboard to continue.");
-        log("Dashboard disconnected; key cleared from page memory.");
+        $("connectionStatus").textContent = "Disconnected; key cleared.";
+        setStatus("Connect the dashboard to continue.");
+        $("diagnostics").textContent = "No discovery run yet.";
+        log("Dashboard disconnected.");
       });
 
       $("serverBtn").addEventListener("click", () =>
         run("Checking server", async () => {
-          const data = await request("/health", {}, false);
-          return `Server online. ${JSON.stringify(data)}`;
+          const result = await request("/health", {}, false);
+          $("serverIndicator").textContent = "● Server online";
+          $("serverIndicator").className = "good";
+          return result;
         })
       );
 
       $("dbBtn").addEventListener("click", () =>
         run("Checking database", async () => {
-          const data = await request("/api/db-check");
-          return `Database: ${data.database}. Job count: ${data.jobCount}.`;
+          const result = await request("/api/db-check");
+          return `Database: ${result.database}. Job count: ${result.jobCount}.`;
         })
       );
 
       $("emailBtn").addEventListener("click", () =>
-        run("Sending test email", async () => {
-          return await request("/api/gmail/test-send", {
-            method: "POST"
-          });
-        })
+        run("Sending test email", async () =>
+          request("/api/gmail/test-send", { method: "POST" })
+        )
       );
 
       $("loadBtn").addEventListener("click", () =>
@@ -446,23 +437,37 @@ footer {
             method: "POST"
           });
 
-          const summary =
-            `Discovery finished. Matched: ${result.matched ?? 0}; ` +
-            `newly saved: ${result.saved ?? 0}; ` +
-            `duplicates/skipped: ${result.skipped ?? 0}; ` +
-            `save failures: ${result.saveFailures ?? 0}.`;
+          // Show every field returned by the discovery service,
+          // including per-source results and errors.
+          $("diagnostics").textContent =
+            JSON.stringify(result, null, 2);
 
-          if (result.sourceErrors?.length) {
-            log("Some job sources reported errors.");
-          }
+          const summary = [
+            `Discovery finished.`,
+            `Matched: ${result.matched ?? "unknown"}`,
+            `Saved: ${result.saved ?? "unknown"}`,
+            `Skipped: ${result.skipped ?? "unknown"}`,
+            `Save failures: ${result.saveFailures ?? "unknown"}`
+          ].join(" · ");
 
           const jobs = await request("/api/jobs");
           if (Array.isArray(jobs)) renderJobs(jobs);
 
-          return summary + " " +
-            "Review each listing and confirm Nigeria eligibility before applying.";
+          return summary +
+            "\nOpen “View full discovery diagnostics” for source details.";
         })
       );
+
+      fetch("/health")
+        .then((response) => {
+          if (!response.ok) throw new Error("Server unavailable");
+          $("serverIndicator").textContent = "● Server online";
+          $("serverIndicator").className = "good";
+        })
+        .catch(() => {
+          $("serverIndicator").textContent = "● Server check failed";
+          $("serverIndicator").className = "bad";
+        });
     })();
   </script></body>
 </html>

@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en">
+<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,227 +14,355 @@
       --text: #edf3ff;
       --muted: #9eacc3;
       --green: #4ade80;
+      --yellow: #facc15;
       --blue: #60a5fa;
       --red: #f87171;
-    }* { box-sizing: border-box; }
+      --orange: #fb923c;
+    }
 
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 15px/1.5 system-ui, sans-serif;
-}
+    * { box-sizing: border-box; }
 
-header {
-  padding: 24px 18px;
-  background: #101827;
-  border-bottom: 1px solid var(--border);
-}
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 system-ui, sans-serif;
+    }
 
-header h1 { margin: 0 0 5px; font-size: 25px; }
-header p { color: var(--muted); margin: 0; }
+    header {
+      padding: 24px 18px;
+      background: #101827;
+      border-bottom: 1px solid var(--border);
+    }
 
-main {
-  width: min(900px, 100%);
-  margin: auto;
-  padding: 16px;
-}
+    header h1 { margin: 0 0 5px; font-size: 25px; }
+    header p { color: var(--muted); margin: 0; }
 
-section {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 17px;
-  margin-bottom: 15px;
-}
+    main {
+      width: min(900px, 100%);
+      margin: auto;
+      padding: 16px;
+    }
 
-h2 { font-size: 18px; margin: 0 0 12px; }
-.muted { color: var(--muted); }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 17px;
+      margin-bottom: 15px;
+    }
 
-input {
-  width: 100%;
-  padding: 12px;
-  margin: 8px 0 12px;
-  border-radius: 9px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: white;
-  font-size: 15px;
-}
+    h2 { font-size: 18px; margin: 0 0 12px; }
+    .muted { color: var(--muted); }
 
-.buttons {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px;
-  margin-top: 12px;
-}
+    input {
+      width: 100%;
+      padding: 12px;
+      margin: 8px 0 12px;
+      border-radius: 9px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: white;
+      font-size: 15px;
+    }
 
-button {
-  min-height: 44px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: #26354d;
-  color: white;
-  font-weight: 650;
-  cursor: pointer;
-}
+    .buttons {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+      margin-top: 12px;
+    }
 
-button.primary {
-  background: #166534;
-  border-color: #22c55e;
-}
+    button {
+      min-height: 44px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: #26354d;
+      color: white;
+      font-weight: 650;
+      cursor: pointer;
+    }
 
-button.blue {
-  background: #1d4ed8;
-  border-color: var(--blue);
-}
+    button.primary {
+      background: #166534;
+      border-color: #22c55e;
+    }
 
-button:disabled { opacity: .55; cursor: wait; }
+    button.blue {
+      background: #1d4ed8;
+      border-color: var(--blue);
+    }
 
-.status {
-  padding: 12px;
-  border-radius: 9px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  margin-top: 12px;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
+    button:disabled { opacity: .55; cursor: wait; }
 
-.job {
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border);
-}
+    .status {
+      padding: 12px;
+      border-radius: 9px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      margin-top: 12px;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
 
-.job:last-child { border-bottom: 0; }
-.job h3 { margin: 0 0 4px; font-size: 16px; }
-.job p { margin: 4px 0; color: var(--muted); overflow-wrap: anywhere; }
-a { color: var(--blue); }
+    .job {
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
 
-.pill {
-  display: inline-block;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 2px 8px;
-  font-size: 12px;
-  margin-top: 5px;
-}
+    .job:last-child { border-bottom: 0; }
+    .job h3 { margin: 0 0 4px; font-size: 16px; }
+    .job p { margin: 4px 0; color: var(--muted); overflow-wrap: anywhere; }
+    a { color: var(--blue); }
 
-.good { color: var(--green); }
-.bad { color: var(--red); }
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2px 8px;
+      font-size: 12px;
+      margin: 3px 3px 3px 0;
+    }
 
-details { margin-top: 12px; }
-summary { cursor: pointer; color: var(--blue); }
+    .pill-high {
+      border-color: var(--green);
+      color: var(--green);
+      background: rgba(74, 222, 128, 0.1);
+    }
 
-pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font: 12px/1.5 ui-monospace, monospace;
-  color: #dbeafe;
-}
+    .pill-medium {
+      border-color: var(--yellow);
+      color: var(--yellow);
+      background: rgba(250, 204, 21, 0.1);
+    }
 
-footer {
-  padding: 18px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 12px;
-}
+    .pill-low {
+      border-color: var(--muted);
+      color: var(--muted);
+      background: rgba(158, 172, 195, 0.08);
+    }
 
-@media (max-width: 430px) {
-  .buttons { grid-template-columns: 1fr; }
-  header h1 { font-size: 22px; }
-}
+    .pill-confirmed {
+      border-color: var(--green);
+      color: var(--green);
+      background: rgba(74, 222, 128, 0.1);
+    }
 
+    .pill-potential {
+      border-color: var(--yellow);
+      color: var(--yellow);
+      background: rgba(250, 204, 21, 0.1);
+    }
+
+    .pill-restricted {
+      border-color: var(--orange);
+      color: var(--orange);
+      background: rgba(251, 146, 60, 0.1);
+    }
+
+    .pill-unknown {
+      border-color: var(--muted);
+      color: var(--muted);
+      background: rgba(158, 172, 195, 0.08);
+    }
+
+    .pill-status {
+      border-color: var(--blue);
+      color: var(--blue);
+      background: rgba(96, 165, 250, 0.1);
+    }
+
+    .good { color: var(--green); }
+    .bad { color: var(--red); }
+
+    .priority-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 10px;
+    }
+
+    .priority-card:last-child { margin-bottom: 0; }
+
+    .priority-card h3 {
+      margin: 0 0 4px;
+      font-size: 15px;
+    }
+
+    .priority-card .company {
+      color: var(--muted);
+      font-size: 13px;
+      margin: 0 0 8px;
+    }
+
+    .priority-card .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .priority-card .score {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0 0 6px;
+    }
+
+    .priority-card a {
+      font-size: 13px;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .stat-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      text-align: center;
+    }
+
+    .stat-box .num {
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .stat-box .label {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    details { margin-top: 12px; }
+    summary { cursor: pointer; color: var(--blue); }
+
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: 12px/1.5 ui-monospace, monospace;
+      color: #dbeafe;
+    }
+
+    footer {
+      padding: 18px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 430px) {
+      .buttons { grid-template-columns: 1fr; }
+      header h1 { font-size: 22px; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    }
   </style>
 </head>
 <body>
   <header>
     <h1>XTOP Career Agent</h1>
     <p>Remote jobs, contracts, Gmail and application tracking.</p>
-    <p id="serverIndicator" style="margin-top:10px">● Checking server…</p>
-  </header>  <main>
+    <p id="serverIndicator" style="margin-top:10px">Checking server...</p>
+  </header>
+
+  <main>
     <section>
       <h2>Secure access</h2>
       <p class="muted">
         Enter your AGENT_API_KEY from Render. It stays in page memory
         and is not saved to browser storage.
-      </p>  <input
-    id="apiKey"
-    type="password"
-    placeholder="Enter AGENT_API_KEY"
-    autocomplete="off"
-    spellcheck="false"
-  >
+      </p>
+      <input
+        id="apiKey"
+        type="password"
+        placeholder="Enter AGENT_API_KEY"
+        autocomplete="off"
+        spellcheck="false"
+      >
+      <div class="buttons">
+        <button class="primary" id="connectBtn">Connect dashboard</button>
+        <button id="disconnectBtn">Disconnect and clear key</button>
+      </div>
+      <div id="connectionStatus" class="status" aria-live="polite">
+        Not connected
+      </div>
+    </section>
 
-  <div class="buttons">
-    <button class="primary" id="connectBtn">Connect dashboard</button>
-    <button id="disconnectBtn">Disconnect and clear key</button>
-  </div>
+    <section>
+      <h2>Agent controls</h2>
+      <p class="muted">
+        Discover remote software roles, check the database, test Gmail,
+        and load saved job leads.
+      </p>
+      <div class="buttons">
+        <button id="serverBtn">Check server</button>
+        <button id="dbBtn">Check database</button>
+        <button id="emailBtn">Send test email</button>
+        <button id="loadBtn">Load job leads</button>
+        <button class="primary" id="discoverBtn">Discover jobs</button>
+      </div>
+      <div id="discoveryStatus" class="status" aria-live="polite">
+        Ready. Connect the dashboard to begin.
+      </div>
+      <details>
+        <summary>View full discovery diagnostics</summary>
+        <pre id="diagnostics">No discovery run yet.</pre>
+      </details>
+      <p class="muted" style="margin-top:12px;font-size:13px">
+        Job discovery retrieves listings from configured public sources.
+        Verify location eligibility and application deadlines before applying.
+        Test email is sent only to GMAIL_ALLOWED_EMAIL.
+      </p>
+    </section>
 
-  <div id="connectionStatus" class="status" aria-live="polite">
-    Not connected
-  </div>
-</section>
+    <section id="prioritySection" style="display:none">
+      <h2>Priority application queue</h2>
+      <p class="muted" style="margin-bottom:12px">
+        Top opportunities ranked by suitability for your skills.
+        Run Discover jobs to refresh.
+      </p>
+      <div id="priorityStats" class="stats-grid"></div>
+      <div id="priorityList" style="margin-top:14px"></div>
+    </section>
 
-<section>
-  <h2>Agent controls</h2>
-  <p class="muted">
-    Discover remote software roles, check the database, test Gmail,
-    and load saved job leads.
-  </p>
+    <section>
+      <h2>Job leads</h2>
+      <div id="jobCount" class="muted">No jobs loaded yet.</div>
+      <div id="jobsList">
+        <p class="muted">Connect and load job leads to see results.</p>
+      </div>
+    </section>
 
-  <div class="buttons">
-    <button id="serverBtn">Check server</button>
-    <button id="dbBtn">Check database</button>
-    <button id="emailBtn">Send test email</button>
-    <button id="loadBtn">Load job leads</button>
-    <button class="primary" id="discoverBtn">Discover jobs</button>
-  </div>
+    <section>
+      <h2>Activity</h2>
+      <div id="activity" class="status" aria-live="polite">
+        Dashboard ready.
+      </div>
+    </section>
+  </main>
 
-  <div id="discoveryStatus" class="status" aria-live="polite">
-    Ready. Connect the dashboard to begin.
-  </div>
+  <footer>XTOP Retail Technologies - XTOP Career Agent</footer>
 
-  <details>
-    <summary>View full discovery diagnostics</summary>
-    <pre id="diagnostics">No discovery run yet.</pre>
-  </details>
-
-  <p class="muted" style="margin-top:12px;font-size:13px">
-    Job discovery retrieves listings from configured public sources.
-    Verify location eligibility and application deadlines before applying.
-    Test email is sent only to GMAIL_ALLOWED_EMAIL.
-  </p>
-</section>
-
-<section>
-  <h2>Job leads</h2>
-  <div id="jobCount" class="muted">No jobs loaded yet.</div>
-  <div id="jobsList">
-    <p class="muted">Connect and load job leads to see results.</p>
-  </div>
-</section>
-
-<section>
-  <h2>Activity</h2>
-  <div id="activity" class="status" aria-live="polite">
-    Dashboard ready.
-  </div>
-</section>
-
-  </main>  <footer>XTOP Retail Technologies · XTOP Career Agent</footer>  <script>
-    (() => {
+  <script>
+    (function () {
       "use strict";
 
-      let apiKey = "";
-      let busy = false;
+      var apiKey = "";
+      var busy = false;
 
-      const $ = (id) => document.getElementById(id);
+      function $(id) { return document.getElementById(id); }
 
       function log(message) {
         $("activity").textContent =
-          new Date().toLocaleTimeString() + " — " + message;
+          new Date().toLocaleTimeString() + " - " + message;
       }
 
       function setStatus(message) {
@@ -242,93 +371,254 @@ footer {
 
       function setBusy(value) {
         busy = value;
-        document.querySelectorAll("button").forEach((button) => {
-          button.disabled = value;
-        });
+        var buttons = document.querySelectorAll("button");
+        for (var i = 0; i < buttons.length; i++) {
+          buttons[i].disabled = value;
+        }
       }
 
-      async function request(path, options = {}, authenticated = true) {
-        const headers = {
-          Accept: "application/json",
-          ...(options.headers || {})
+      function tierClass(tier) {
+        if (tier === "high") return "pill-high";
+        if (tier === "medium") return "pill-medium";
+        return "pill-low";
+      }
+
+      function eligibilityClass(cat) {
+        if (cat === "confirmed") return "pill-confirmed";
+        if (cat === "potential") return "pill-potential";
+        if (cat === "restricted") return "pill-restricted";
+        return "pill-unknown";
+      }
+
+      function eligibilityLabel(cat) {
+        if (cat === "confirmed") return "Nigeria confirmed";
+        if (cat === "potential") return "Potentially eligible";
+        if (cat === "restricted") return "Restricted location";
+        return "Eligibility unknown";
+      }
+
+      function tierLabel(tier) {
+        if (tier === "high") return "High fit";
+        if (tier === "medium") return "Medium fit";
+        return "Low fit";
+      }
+
+      async function request(path, options, authenticated) {
+        if (options === undefined) options = {};
+        if (authenticated === undefined) authenticated = true;
+
+        var headers = {
+          Accept: "application/json"
         };
+        if (options.headers) {
+          var keys = Object.keys(options.headers);
+          for (var i = 0; i < keys.length; i++) {
+            headers[keys[i]] = options.headers[keys[i]];
+          }
+        }
 
         if (authenticated) {
           if (!apiKey) throw new Error("Connect the dashboard first.");
           headers["x-agent-key"] = apiKey;
         }
 
-        const response = await fetch(path, {
-          ...options,
-          headers
-        });
+        var fetchOpts = { headers: headers };
+        if (options.method) fetchOpts.method = options.method;
 
-        const contentType = response.headers.get("content-type") || "";
-        const data = contentType.includes("application/json")
-          ? await response.json()
-          : await response.text();
+        var response = await fetch(path, fetchOpts);
+
+        var contentType = response.headers.get("content-type") || "";
+        var data;
+        if (contentType.indexOf("application/json") >= 0) {
+          data = await response.json();
+        } else {
+          data = await response.text();
+        }
 
         if (!response.ok) {
-          const message = typeof data === "string"
+          var message = typeof data === "string"
             ? data
-            : data.error || `Request failed (${response.status})`;
+            : (data.error || "Request failed (" + response.status + ")");
           throw new Error(message);
         }
 
         return data;
       }
 
+      function renderPriorityQueue(result) {
+        var section = $("prioritySection");
+        var statsDiv = $("priorityStats");
+        var listDiv = $("priorityList");
+
+        statsDiv.replaceChildren();
+        listDiv.replaceChildren();
+
+        var stats = [
+          { num: result.matched, label: "Matched", color: "var(--text)" },
+          { num: result.highSuitability, label: "High fit", color: "var(--green)" },
+          { num: result.mediumSuitability, label: "Medium fit", color: "var(--yellow)" },
+          { num: result.lowSuitability, label: "Low fit", color: "var(--muted)" },
+          { num: result.techStackMatched, label: "Stack match", color: "var(--blue)" },
+          { num: result.nigeriaEligible, label: "NG confirmed", color: "var(--green)" },
+          { num: result.nigeriaPotential, label: "NG potential", color: "var(--yellow)" },
+          { num: result.nigeriaRestricted, label: "NG restricted", color: "var(--orange)" }
+        ];
+
+        for (var s = 0; s < stats.length; s++) {
+          var box = document.createElement("div");
+          box.className = "stat-box";
+
+          var num = document.createElement("div");
+          num.className = "num";
+          num.style.color = stats[s].color;
+          num.textContent = stats[s].num != null ? stats[s].num : "-";
+          box.appendChild(num);
+
+          var label = document.createElement("div");
+          label.className = "label";
+          label.textContent = stats[s].label;
+          box.appendChild(label);
+
+          statsDiv.appendChild(box);
+        }
+
+        var topJobs = result.topJobs;
+        if (!Array.isArray(topJobs) || topJobs.length === 0) {
+          var empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = "No priority jobs in this run.";
+          listDiv.appendChild(empty);
+          section.style.display = "";
+          return;
+        }
+
+        for (var i = 0; i < topJobs.length; i++) {
+          var tj = topJobs[i];
+          var card = document.createElement("div");
+          card.className = "priority-card";
+
+          var title = document.createElement("h3");
+          title.textContent = (i + 1) + ". " + (tj.title || "Untitled");
+          card.appendChild(title);
+
+          var company = document.createElement("div");
+          company.className = "company";
+          company.textContent = tj.company || "Company not listed";
+          card.appendChild(company);
+
+          var meta = document.createElement("div");
+          meta.className = "meta";
+
+          var tierPill = document.createElement("span");
+          tierPill.className = "pill " + tierClass(tj.tier);
+          tierPill.textContent = tierLabel(tj.tier);
+          meta.appendChild(tierPill);
+
+          var eligPill = document.createElement("span");
+          eligPill.className = "pill " + eligibilityClass(tj.eligibility);
+          eligPill.textContent = eligibilityLabel(tj.eligibility);
+          meta.appendChild(eligPill);
+
+          card.appendChild(meta);
+
+          var score = document.createElement("div");
+          score.className = "score";
+          score.textContent = "Suitability score: " + (tj.score != null ? tj.score : "?");
+          card.appendChild(score);
+
+          if (tj.url) {
+            try {
+              var u = new URL(tj.url);
+              if (u.protocol === "https:" || u.protocol === "http:") {
+                var link = document.createElement("a");
+                link.href = u.href;
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                link.textContent = "Open listing and apply";
+                card.appendChild(link);
+              }
+            } catch (e) {}
+          }
+
+          listDiv.appendChild(card);
+        }
+
+        section.style.display = "";
+      }
+
       function renderJobs(jobs) {
-        const list = $("jobsList");
+        var list = $("jobsList");
         list.replaceChildren();
 
         $("jobCount").textContent =
-          `${jobs.length} job lead${jobs.length === 1 ? "" : "s"} returned`;
+          jobs.length + " job lead" + (jobs.length === 1 ? "" : "s") + " returned";
 
         if (jobs.length === 0) {
-          const empty = document.createElement("p");
+          var empty = document.createElement("p");
           empty.className = "muted";
           empty.textContent = "No jobs saved yet. Try Discover jobs.";
           list.appendChild(empty);
           return;
         }
 
-        for (const job of jobs) {
-          const item = document.createElement("article");
+        for (var i = 0; i < jobs.length; i++) {
+          var job = jobs[i];
+          var item = document.createElement("article");
           item.className = "job";
 
-          const title = document.createElement("h3");
+          var title = document.createElement("h3");
           title.textContent = job.title || "Untitled role";
           item.appendChild(title);
 
-          const company = document.createElement("p");
+          var company = document.createElement("p");
           company.textContent =
-            `${job.company || "Company not listed"} · ${job.location || "Location unknown"}`;
+            (job.company || "Company not listed") +
+            " \u00b7 " +
+            (job.location || "Location unknown");
           item.appendChild(company);
 
-          const status = document.createElement("p");
-          status.textContent =
-            `Application status: ${job.status || "discovered"}`;
-          item.appendChild(status);
+          var pills = document.createElement("div");
 
-          const eligibility = document.createElement("p");
-          eligibility.textContent = job.nigeria_eligible
-            ? "Nigeria eligibility: indicated; verify listing"
-            : "Nigeria eligibility: unconfirmed";
-          item.appendChild(eligibility);
+          var statusPill = document.createElement("span");
+          statusPill.className = "pill pill-status";
+          statusPill.textContent = job.status || "discovered";
+          pills.appendChild(statusPill);
+
+          if (job.nigeria_eligible) {
+            var ngPill = document.createElement("span");
+            ngPill.className = "pill pill-confirmed";
+            ngPill.textContent = "Nigeria eligible";
+            pills.appendChild(ngPill);
+          }
+
+          if (job.remote) {
+            var remotePill = document.createElement("span");
+            remotePill.className = "pill";
+            remotePill.textContent = "Remote";
+            pills.appendChild(remotePill);
+          }
+
+          item.appendChild(pills);
+
+          if (job.notes) {
+            var notes = document.createElement("p");
+            notes.style.fontSize = "13px";
+            notes.textContent = job.notes;
+            item.appendChild(notes);
+          }
 
           if (job.url) {
             try {
-              const url = new URL(job.url);
-              if (url.protocol === "https:" || url.protocol === "http:") {
-                const link = document.createElement("a");
-                link.href = url.href;
+              var u = new URL(job.url);
+              if (u.protocol === "https:" || u.protocol === "http:") {
+                var link = document.createElement("a");
+                link.href = u.href;
                 link.target = "_blank";
                 link.rel = "noopener noreferrer";
-                link.textContent = "Open job listing ↗";
+                link.textContent = "Open job listing";
                 item.appendChild(link);
               }
-            } catch (_) {}
+            } catch (e) {}
           }
 
           list.appendChild(item);
@@ -338,11 +628,11 @@ footer {
       async function run(label, task) {
         if (busy) return;
         setBusy(true);
-        setStatus(label + "…");
+        setStatus(label + "...");
         log(label + " started.");
 
         try {
-          const result = await task();
+          var result = await task();
           setStatus(typeof result === "string"
             ? result
             : JSON.stringify(result, null, 2));
@@ -355,10 +645,10 @@ footer {
         }
       }
 
-      $("connectBtn").addEventListener("click", async () => {
+      $("connectBtn").addEventListener("click", function () {
         if (busy) return;
 
-        const candidate = $("apiKey").value.trim();
+        var candidate = $("apiKey").value.trim();
         if (!candidate) {
           $("connectionStatus").textContent =
             "Enter your AGENT_API_KEY first.";
@@ -366,108 +656,127 @@ footer {
         }
 
         setBusy(true);
-        try {
-          const response = await fetch("/api/db-check", {
-            headers: { "x-agent-key": candidate }
+        fetch("/api/db-check", {
+          headers: { "x-agent-key": candidate }
+        })
+          .then(function (response) {
+            return response.json().then(function (data) {
+              if (!response.ok) {
+                throw new Error(data.error || "Could not connect.");
+              }
+              apiKey = candidate;
+              $("connectionStatus").textContent =
+                "Connected. Supabase is reachable.";
+              log("Dashboard connected.");
+            });
+          })
+          .catch(function (error) {
+            apiKey = "";
+            $("connectionStatus").textContent =
+              "Connection failed: " + error.message;
+          })
+          .finally(function () {
+            setBusy(false);
           });
-
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data.error || "Could not connect.");
-          }
-
-          apiKey = candidate;
-          $("connectionStatus").textContent =
-            "Connected. Supabase is reachable.";
-          log("Dashboard connected.");
-        } catch (error) {
-          apiKey = "";
-          $("connectionStatus").textContent =
-            "Connection failed: " + error.message;
-        } finally {
-          setBusy(false);
-        }
       });
 
-      $("disconnectBtn").addEventListener("click", () => {
+      $("disconnectBtn").addEventListener("click", function () {
         apiKey = "";
         $("apiKey").value = "";
         $("connectionStatus").textContent = "Disconnected; key cleared.";
         setStatus("Connect the dashboard to continue.");
         $("diagnostics").textContent = "No discovery run yet.";
+        $("prioritySection").style.display = "none";
         log("Dashboard disconnected.");
       });
 
-      $("serverBtn").addEventListener("click", () =>
-        run("Checking server", async () => {
-          const result = await request("/health", {}, false);
-          $("serverIndicator").textContent = "● Server online";
-          $("serverIndicator").className = "good";
-          return result;
-        })
-      );
-
-      $("dbBtn").addEventListener("click", () =>
-        run("Checking database", async () => {
-          const result = await request("/api/db-check");
-          return `Database: ${result.database}. Job count: ${result.jobCount}.`;
-        })
-      );
-
-      $("emailBtn").addEventListener("click", () =>
-        run("Sending test email", async () =>
-          request("/api/gmail/test-send", { method: "POST" })
-        )
-      );
-
-      $("loadBtn").addEventListener("click", () =>
-        run("Loading job leads", async () => {
-          const jobs = await request("/api/jobs");
-          if (!Array.isArray(jobs)) {
-            throw new Error("Unexpected job-list response.");
-          }
-          renderJobs(jobs);
-          return `Loaded ${jobs.length} job lead(s).`;
-        })
-      );
-
-      $("discoverBtn").addEventListener("click", () =>
-        run("Discovering remote jobs", async () => {
-          const result = await request("/api/jobs/discover", {
-            method: "POST"
+      $("serverBtn").addEventListener("click", function () {
+        run("Checking server", function () {
+          return request("/health", {}, false).then(function (result) {
+            $("serverIndicator").textContent = "Server online";
+            $("serverIndicator").className = "good";
+            return result;
           });
+        });
+      });
 
-          // Show every field returned by the discovery service,
-          // including per-source results and errors.
-          $("diagnostics").textContent =
-            JSON.stringify(result, null, 2);
+      $("dbBtn").addEventListener("click", function () {
+        run("Checking database", function () {
+          return request("/api/db-check").then(function (result) {
+            return "Database: " + result.database + ". Job count: " + result.jobCount + ".";
+          });
+        });
+      });
 
-          const summary = [
-            `Discovery finished.`,
-            `Matched: ${result.matched ?? "unknown"}`,
-            `Saved: ${result.saved ?? "unknown"}`,
-            `Skipped: ${result.skipped ?? "unknown"}`,
-            `Save failures: ${result.saveFailures ?? "unknown"}`
-          ].join(" · ");
+      $("emailBtn").addEventListener("click", function () {
+        run("Sending test email", function () {
+          return request("/api/gmail/test-send", { method: "POST" });
+        });
+      });
 
-          const jobs = await request("/api/jobs");
-          if (Array.isArray(jobs)) renderJobs(jobs);
+      $("loadBtn").addEventListener("click", function () {
+        run("Loading job leads", function () {
+          return request("/api/jobs").then(function (jobs) {
+            if (!Array.isArray(jobs)) {
+              throw new Error("Unexpected job-list response.");
+            }
+            renderJobs(jobs);
+            return "Loaded " + jobs.length + " job lead(s).";
+          });
+        });
+      });
 
-          return summary +
-            "\nOpen “View full discovery diagnostics” for source details.";
-        })
-      );
+      $("discoverBtn").addEventListener("click", function () {
+        run("Discovering remote jobs", function () {
+          return request("/api/jobs/discover", { method: "POST" })
+            .then(function (result) {
+              $("diagnostics").textContent =
+                JSON.stringify(result, null, 2);
+
+              renderPriorityQueue(result);
+
+              var lines = [
+                "Discovery finished.",
+                "",
+                "Matched: " + (result.matched != null ? result.matched : "?"),
+                "  High fit: " + (result.highSuitability != null ? result.highSuitability : "?"),
+                "  Medium fit: " + (result.mediumSuitability != null ? result.mediumSuitability : "?"),
+                "  Low fit: " + (result.lowSuitability != null ? result.lowSuitability : "?"),
+                "  Stack match: " + (result.techStackMatched != null ? result.techStackMatched : "?"),
+                "",
+                "Saved: " + (result.saved != null ? result.saved : "?"),
+                "Updated: " + (result.updated != null ? result.updated : "?"),
+                "Duplicates: " + (result.duplicates != null ? result.duplicates : "?"),
+                "Validation failures: " + (result.validationFailures != null ? result.validationFailures : "?"),
+                "Save failures: " + (result.saveFailures != null ? result.saveFailures : "?"),
+                "",
+                "Nigeria eligibility:",
+                "  Confirmed: " + (result.nigeriaEligible != null ? result.nigeriaEligible : "?"),
+                "  Potential: " + (result.nigeriaPotential != null ? result.nigeriaPotential : "?"),
+                "  Restricted: " + (result.nigeriaRestricted != null ? result.nigeriaRestricted : "?"),
+                "  Unknown: " + (result.nigeriaUnknown != null ? result.nigeriaUnknown : "?")
+              ];
+
+              return request("/api/jobs").then(function (jobs) {
+                if (Array.isArray(jobs)) renderJobs(jobs);
+                return lines.join("\n") +
+                  "\n\nOpen \"View full discovery diagnostics\" for source details.";
+              });
+            });
+        });
+      });
 
       fetch("/health")
-        .then((response) => {
+        .then(function (response) {
           if (!response.ok) throw new Error("Server unavailable");
-          $("serverIndicator").textContent = "● Server online";
+          $("serverIndicator").textContent = "Server online";
           $("serverIndicator").className = "good";
         })
-        .catch(() => {
-          $("serverIndicator").textContent = "● Server check failed";
+        .catch(function () {
+          $("serverIndicator").textContent = "Server check failed";
           $("serverIndicator").className = "bad";
         });
     })();
-  </script></body>
+  </script>
+</body>
 </html>

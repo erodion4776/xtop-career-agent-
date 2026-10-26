@@ -96,12 +96,12 @@ export async function addJob(input: JobLead): Promise<AddJobResult> {
   // Step 2: row exists — refresh feed-owned fields only.
   // User-owned fields (status, notes, salary_min_ngn, salary_max_ngn)
   // are intentionally excluded from the update.
+  //
+  // IMPORTANT: the select string must be a single literal so that the
+  // Supabase TypeScript client can infer the return shape at compile time.
   const { data: existing, error: lookupError } = await supabase
     .from("job_leads")
-    .select(
-      "id, title, company, location, description, " +
-      "nigeria_eligible, employment_type, remote, source"
-    )
+    .select("id,title,company,location,description,nigeria_eligible,employment_type,remote,source")
     .eq("url", job.url)
     .maybeSingle();
 

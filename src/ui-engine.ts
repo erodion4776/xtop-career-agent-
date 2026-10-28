@@ -3,7 +3,7 @@ import { sendMessage, editMessageText, answerCallbackQuery } from "./telegram.js
 // ── Types ──────────────────────────────────────────────
 export interface Btn {
   text: string;
-  data: string;
+  callback_data: string;
 }
 
 export interface Keyboard {
@@ -16,10 +16,10 @@ export function kb(rows: Btn[][]): Keyboard {
 }
 
 // ── Single button ──────────────────────────────────────
-export function btn(text: string, data: string): Btn {
+export function btn(text: string, callbackData: string): Btn {
   // Telegram limits callback_data to 64 bytes
-  const safe = data.length > 60 ? data.slice(0, 60) : data;
-  return { text, data: safe };
+  const safe = callbackData.length > 60 ? callbackData.slice(0, 60) : callbackData;
+  return { text, callback_data: safe };
 }
 
 // ── Navigation row ─────────────────────────────────────
@@ -34,7 +34,7 @@ export function navRow(backData?: string, homeData = "m:main"): Btn[] {
 export function pageRow(prefix: string, page: number, totalPages: number): Btn[] {
   const row: Btn[] = [];
   if (page > 0) row.push(btn("◀️ Prev", `${prefix}:${page - 1}`));
-  row.push(btn(`${page + 1}/${totalPages}`, "noop:0"));
+  row.push(btn(`${page + 1}/${totalPages}`, `noop:${page}`));
   if (page < totalPages - 1) row.push(btn("Next ▶️", `${prefix}:${page + 1}`));
   return row;
 }
@@ -108,11 +108,11 @@ export function paginateList<T>(
   };
 }
 
-// ── Answer callback (required by Telegram) ─────────────
+// ── Answer callback ────────────────────────────────────
 export async function ackCallback(queryId: string, text?: string) {
   try {
     await answerCallbackQuery(queryId, text);
-  } catch { /* ignore if already expired */ }
+  } catch { /* ignore */ }
 }
 
 // ── Escape for Markdown ───────────────────────────────

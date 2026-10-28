@@ -696,13 +696,15 @@ async function detectProspect(chatId: number, text: string): Promise<boolean> {
 }
 
 // ── Main Router (exported as handleUpdate for index.ts) ─
-export async function handleUpdate(
-  chatId: number,
-  text: string,
-  from?: { id?: number; first_name?: string }
-) {
-  const { cmd, args } = parseCmd(text);
+export async function handleUpdate(update: any) {
+  const message = update?.message;
+  if (!message?.text) return;
+  const chatId: number = message.chat?.id;
+  const text: string = message.text;
+  const from = message.from;
+  if (!chatId || !text) return;
 
+  const { cmd, args } = parseCmd(text);
   // ── Operations ──
   if (cmd === "/start" || cmd === "/help") return handleStart(chatId);
   if (cmd === "/status") return handleStatus(chatId);

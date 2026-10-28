@@ -10,6 +10,12 @@ import {
 } from "./task-engine.js";
 import { processPendingTasks } from "./task-runner.js";
 import { logAction } from "./audit-log.js";
+import {
+  addProspect,
+  listProspects,
+  getCrmStats,
+  searchProspects,
+} from "./crm.js";
 
 /** Track processed update IDs to avoid duplicates. */
 const processed = new Set<number>();
@@ -108,26 +114,34 @@ async function routeCommand(
 ): Promise<void> {
   const lower = text.toLowerCase();
 
+  // ── HELP ──────────────────────────────────────
+
   if (lower === "/start" || lower === "/help") {
     await sendMessage(
       chatId,
       [
         "🤖 *XTOP Retail Workforce*",
         "",
-        "Available commands:",
+        "*Operations:*",
         "/status — System health check",
         "/tasks — Recent task history",
         "/discover — Find remote software jobs",
         "/report — Task completion report",
-        "/help — Show this message",
         "",
-        "You can also type natural language instructions.",
+        "*CRM:*",
+        "/crm — Pipeline dashboard",
+        "/addprospect — Add a business prospect",
+        "/prospects — List or search prospects",
+        "/find \\<keyword\\> — Search prospects",
+        "",
         "More features coming in future stages.",
       ].join("\n"),
       { parseMode: "Markdown" }
     );
     return;
   }
+
+  // ── STATUS ────────────────────────────────────
 
   if (lower === "/status") {
     await sendMessage(chatId, "⏳ Checking system health...");
@@ -171,6 +185,8 @@ async function routeCommand(
     return;
   }
 
+  // ── TASKS ─────────────────────────────────────
+
   if (lower === "/tasks") {
     try {
       const tasks = await listRecentTasks(5);
@@ -209,6 +225,8 @@ async function routeCommand(
     }
     return;
   }
+
+  // ── DISCOVER ──────────────────────────────────
 
   if (lower === "/discover") {
     await sendMessage(
@@ -263,6 +281,8 @@ async function routeCommand(
     return;
   }
 
+  // ── REPORT ────────────────────────────────────
+
   if (lower === "/report") {
     try {
       const task = await createTask(
@@ -311,7 +331,224 @@ async function routeCommand(
     return;
   }
 
-  // Natural language fallback
+  // ── CRM: DASHBOARD ────────────────────────────
+
+  if (lower === "/crm") {
+    try {
+      const stats = await getCrmStats();
+
+      const statusLines = Object.entries(stats.byStatus)
+        .map(([s, count]) => `  ${escapeMd(s)}: ${count}`)
+        .join("\n");
+
+      const recentLines = stats.recentProspects.length > 0
+        ? stats.recentProspects
+            .map(
+              (p) =>
+                `  ${escapeMd(p.business_name)} (score: ${p.score}, ${escapeMd(p.status)})`
+            )
+            .join("\n")
+        : "  No prospects yet.";
+
+      await sendMessage(
+        chatId,
+        [
+          "📊 *CRM Dashboard*",
+          "",
+          `Total prospects: ${stats.total}`,
+          `Pending outreach: ${stats.pendingOutreach}`,
+          "",
+          "*By status:*",
+          statusLines || "  None",
+          "",
+          "*Recent prospects:*",
+          recentLines,
+          "",
+          "Use /addprospect to add a new prospect.",
+          "Use /prospects to see the full list.",
+        ].join("\n"),
+        { parseMode: "Markdown" }
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "unknown";
+      await sendMessage(
+        chatId,
+        `❌ CRM error: ${escapeMd(msg)}`
+      );
+    }
+    return;
+  }
+
+  // ── CRM: ADD PROSPECT ─────────────────────────
+
+  if (lower.startsWith("/addprospect")) {
+    const raw = text.slice("/addprospect".length).trim();
+
+    if (!raw) {
+      await sendMessage(
+        chatId,
+        [
+          "📝 *Add a Prospect*",
+          "",
+          "Format:",
+          "`/addprospect Business Name | email | phone`",
+          "",
+          "Example:",
+          "`/addprospect Ero Bakery | ero@email.com | 08012345678`",
+          "",
+          "Only the business name is required.",
+        ].join("\n"),
+        { parseMode: "Markdown" }
+      );
+      return;
+    }
+
+    const parts = raw.split("|").map((s) => s.trim());
+    const businessName = parts[0];
+    const email = parts[1] || undefined;
+    const phone = parts[2] || undefined;
+    const website = parts[3] || undefined;
+
+    if (!businessName) {
+      await sendMessage(chatId, "❌ Business name is required.");
+      return;
+    }
+
+    try {
+      const prospect = await addProspect({
+        business_name: businessName,
+        email,
+        phone,
+        website,
+        source: "telegram",
+      });
+
+      await sendMessage(
+        chatId,
+        [
+          "✅ *Prospect Added*",
+          "",
+          `Business: ${escapeMd(prospect.business_name)}`,
+          `Score: ${prospect.score}/100`,
+          `Status: ${escapeMd(prospect.status)}`,
+          `City: ${escapeMd(prospect.city)}`,
+          email ? `Email: ${escapeMd(email)}` : "",
+          phone ? `Phone: ${escapeMd(phone)}` : "",
+          "",
+          "Use /crm to see your pipeline.",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        { parseMode: "Markdown" }
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "unknown";
+      await sendMessage(
+        chatId,
+        `❌ Could not add prospect: ${escapeMd(msg)}`
+      );
+    }
+    return;
+  }
+
+  // ── CRM: LIST / SEARCH PROSPECTS ──────────────
+
+  if (lower.startsWith("/prospects")) {
+    const query = text.slice("/prospects".length).trim();
+
+    try {
+      const prospects = query
+        ? await searchProspects(query)
+        : await listProspects(10);
+
+      if (prospects.length === 0) {
+        await sendMessage(
+          chatId,
+          query
+            ? `🔍 No prospects matching "${escapeMd(query)}".`
+            : "📋 No prospects yet. Use /addprospect to add one."
+        );
+        return;
+      }
+
+      const lines = prospects.map((p) => {
+        const icon =
+          p.status === "won"
+            ? "🏆"
+            : p.status === "lost"
+              ? "❌"
+              : p.status === "negotiating"
+                ? "🤝"
+                : p.status === "proposal_sent"
+                  ? "📄"
+                  : p.status === "contacted"
+                    ? "📞"
+                    : "🆕";
+        return `${icon} ${escapeMd(p.business_name)}\n   Score: ${p.score} | ${escapeMd(p.status)} | ${escapeMd(p.city)}`;
+      });
+
+      await sendMessage(
+        chatId,
+        `📋 *Prospects*\n\n${lines.join("\n\n")}`,
+        { parseMode: "Markdown" }
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "unknown";
+      await sendMessage(
+        chatId,
+        `❌ Could not load prospects: ${escapeMd(msg)}`
+      );
+    }
+    return;
+  }
+
+  // ── CRM: FIND ─────────────────────────────────
+
+  if (lower.startsWith("/find ")) {
+    const query = text.slice("/find ".length).trim();
+
+    if (!query) {
+      await sendMessage(
+        chatId,
+        "Usage: `/find business name or keyword`",
+        { parseMode: "Markdown" }
+      );
+      return;
+    }
+
+    try {
+      const results = await searchProspects(query);
+
+      if (results.length === 0) {
+        await sendMessage(
+          chatId,
+          `🔍 No prospects found for "${escapeMd(query)}".`
+        );
+        return;
+      }
+
+      const lines = results.map(
+        (p) =>
+          `• ${escapeMd(p.business_name)} (${escapeMd(p.status)}, score: ${p.score})`
+      );
+
+      await sendMessage(
+        chatId,
+        `🔍 *Search Results*\n\n${lines.join("\n")}`,
+        { parseMode: "Markdown" }
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "unknown";
+      await sendMessage(
+        chatId,
+        `❌ Search error: ${escapeMd(msg)}`
+      );
+    }
+    return;
+  }
+
+  // ── NATURAL LANGUAGE FALLBACK ─────────────────
+
   await sendMessage(
     chatId,
     [
@@ -351,7 +588,6 @@ async function handleCallback(
     return;
   }
 
-  // Future: handle approval buttons here
   await answerCallback(
     queryId,
     `Action "${data}" received. Button handlers coming in Stage 2.`

@@ -1,725 +1,734 @@
-import {
-  isOwner,
-  sendMessage,
-  answerCallback,
-} from "./telegram.js";
-import {
-  createTask,
-  listRecentTasks,
-  getTask,
-} from "./task-engine.js";
-import { processPendingTasks } from "./task-runner.js";
-import { logAction } from "./audit-log.js";
-import {
-  addProspect,
-  listProspects,
-  getCrmStats,
-  searchProspects,
-} from "./crm.js";
-import {
-  generateDraft,
-  listDrafts,
-  approveDraft,
-  rejectDraft,
-  sendDraft,
-  findProspectByName,
-  getProspectWithHistory,
-  changeProspectStatus,
-} from "./outreach-engine.js";
+import { sendMessage } from "./telegram.js";
 import { supabase } from "./supabase.js";
+import { getPendingTasks } from "./task-engine.js";
 import {
-  getFullInfraStatus,
-  getRepoInfo,
-  getRecentCommits,
-  getRenderService,
-  getRenderDeploys,
-  getSupabaseHealth,
+  getInfraReport,
+  getGithubHealth,
+  getRenderStatus,
+  getDbStats,
 } from "./infra-monitor.js";
+import { handleDevCommand } from "./dev-commands.js";
 
-const processed = new Set<number>();
-const MAX_TRACKED = 5000;
+// ── Helpers ────────────────────────────────────────────
+function escapeMd(s: string): string {
+  return String(s).replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+}
 
-function isDuplicate(updateId: number): boolean {
-  if (processed.has(updateId)) return true;
-  processed.add(updateId);
-  if (processed.size > MAX_TRACKED) {
-    const arr = [...processed];
-    for (let i = 0; i < Math.floor(arr.length / 2); i++) {
-      processed.delete(arr[i]);
+function parseCmd(text: string): { cmd: string; args: string } {
+  const trimmed = text.trim();
+  const space = trimmed.indexOf(" ");
+  if (space === -1) return { cmd: trimmed.toLowerCase(), args: "" };
+  return {
+    cmd: trimmed.slice(0, space).toLowerCase(),
+    args: trimmed.slice(space + 1).trim(),
+  };
+}
+
+// ── /start ─────────────────────────────────────────────
+async function handleStart(chatId: number) {
+  const lines = [
+    "🤖 *XTOP Career Agent*",
+    "",
+    "*Operations:*",
+    "/status — System health",
+    "/tasks — Pending task queue",
+    "/discover — Run job discovery",
+    "/report — Daily summary",
+    "",
+    "*Infrastructure:*",
+    "/infra — Full infra report",
+    "/github — GitHub repo health",
+    "/render — Render service status",
+    "/dbstatus — Database stats",
+    "",
+    "*CRM:*",
+    "/crm — CRM dashboard",
+    "/addprospect — Add a prospect",
+    "/prospects — List all prospects",
+    "/find <query> — Search prospects",
+    "/prospect <id> — View prospect",
+    "/updatestatus <id> <status> — Update",
+    "",
+    "*Outreach:*",
+    "/draft <prospect\\_id> — Create draft",
+    "/outreach — List drafts",
+    "/approve <id> — Approve draft",
+    "/reject <id> — Reject draft",
+    "/send <id> — Send approved draft",
+    "",
+    "*Dev Agent:*",
+    "/repos — List GitHub repos",
+    "/browse <repo> \\[path\\] — Browse files",
+    "/readfile <repo> <path> — Read a file",
+    "/analyze <repo> <problem> — AI diagnosis",
+    "/fix <repo> <problem> — Auto fix + PR",
+    "/deploy render|netlify — Deploy",
+    "/ci \\[repo\\] — CI status",
+    "/devstatus — Dev activity log",
+  ];
+  await sendMessage(chatId, lines.join("\n"));
+}
+
+// ── /status ────────────────────────────────────────────
+async function handleStatus(chatId: number) {
+  const lines = [
+    "🟢 *XTOP Agent Online*",
+    "",
+    `Uptime: ${escapeMd(process.uptime().toFixed(0))}s`,
+    `Node: ${escapeMd(process.version)}`,
+    `Env: ${escapeMd(process.env.NODE_ENV || "production")}`,
+    "",
+    "Use /tasks to see pending work.",
+  ];
+  await sendMessage(chatId, lines.join("\n"));
+}
+
+// ── /tasks ─────────────────────────────────────────────
+async function handleTasks(chatId: number) {
+  try {
+    const tasks = await getPendingTasks();
+    if (!tasks.length) {
+      await sendMessage(chatId, "✅ No pending tasks.");
+      return;
     }
+    const lines = tasks.slice(0, 10).map((t: any) =>
+      `• ${escapeMd(t.task_type)} — ${escapeMd(t.status)} (retries: ${t.retry_count})`
+    );
+    await sendMessage(chatId, `📋 *Pending Tasks (${tasks.length})*\n\n${lines.join("\n")}`);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
   }
-  return false;
 }
 
-function escapeMd(text: string): string {
-  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+// ── /discover ──────────────────────────────────────────
+async function handleDiscover(chatId: number) {
+  await sendMessage(chatId, "🔍 Job discovery triggered. Check /tasks for progress.");
+  await supabase.from("tasks").insert({
+    task_type: "job_discovery",
+    status: "pending",
+    payload: { triggered_by: "telegram" },
+  });
 }
 
-export async function handleUpdate(
-  update: Record<string, unknown>
-): Promise<void> {
-  const updateId = update.update_id as number;
-  if (typeof updateId !== "number") return;
-  if (isDuplicate(updateId)) return;
+// ── /report ────────────────────────────────────────────
+async function handleReport(chatId: number) {
+  try {
+    const { data: leads, count } = await supabase
+      .from("job_leads")
+      .select("id", { count: "exact", head: true });
 
-  const callback = update.callback_query as Record<string, unknown> | undefined;
-  if (callback) {
-    await handleCallback(callback);
-    return;
+    const { data: tasks } = await supabase
+      .from("tasks")
+      .select("status")
+      .in("status", ["pending", "running"]);
+
+    const lines = [
+      "📊 *Daily Report*",
+      "",
+      `Total leads: ${count || 0}`,
+      `Active tasks: ${tasks?.length || 0}`,
+      `Uptime: ${process.uptime().toFixed(0)}s`,
+    ];
+    await sendMessage(chatId, lines.join("\n"));
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
   }
-
-  const message = update.message as Record<string, unknown> | undefined;
-  if (!message) return;
-
-  const from = message.from as Record<string, unknown> | undefined;
-  const chat = message.chat as Record<string, unknown> | undefined;
-  if (!from || !chat) return;
-
-  const userId = from.id as number;
-  const chatId = chat.id as number;
-  const text = (message.text as string)?.trim();
-
-  if (typeof userId !== "number" || typeof chatId !== "number") return;
-
-  if (!isOwner(userId)) {
-    await sendMessage(chatId, "⛔ Unauthorised. This bot is private.");
-    await logAction("unauthorised_access", { userId, chatId });
-    return;
-  }
-
-  if (!text) {
-    await sendMessage(chatId, "I can only process text messages and commands.");
-    return;
-  }
-
-  await routeCommand(chatId, text);
 }
 
-async function routeCommand(chatId: number, text: string): Promise<void> {
-  const lower = text.toLowerCase();
+// ── /infra ─────────────────────────────────────────────
+async function handleInfra(chatId: number) {
+  try {
+    await sendMessage(chatId, "🔧 Gathering infrastructure report...");
+    const report = await getInfraReport();
+    await sendMessage(chatId, escapeMd(report));
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ Infra report failed: ${escapeMd(e.message)}`);
+  }
+}
 
-  // ── HELP ──────────────────────────────────────
+// ── /github ────────────────────────────────────────────
+async function handleGithub(chatId: number) {
+  try {
+    const report = await getGithubHealth();
+    await sendMessage(chatId, escapeMd(report));
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
 
-  if (lower === "/start" || lower === "/help") {
+// ── /render ────────────────────────────────────────────
+async function handleRenderCmd(chatId: number) {
+  try {
+    const report = await getRenderStatus();
+    await sendMessage(chatId, escapeMd(report));
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /dbstatus ──────────────────────────────────────────
+async function handleDbStatus(chatId: number) {
+  try {
+    const report = await getDbStats();
+    await sendMessage(chatId, escapeMd(report));
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /crm ───────────────────────────────────────────────
+async function handleCrm(chatId: number) {
+  try {
+    const { count: total } = await supabase
+      .from("prospects")
+      .select("id", { count: "exact", head: true });
+
+    const { data: byStatus } = await supabase
+      .from("prospects")
+      .select("status");
+
+    const counts: Record<string, number> = {};
+    for (const p of byStatus || []) {
+      const s = p.status || "unknown";
+      counts[s] = (counts[s] || 0) + 1;
+    }
+
+    const lines = [
+      "📇 *CRM Dashboard*",
+      "",
+      `Total prospects: ${total || 0}`,
+      "",
+      "*By Status:*",
+      ...Object.entries(counts).map(
+        ([s, c]) => `  ${escapeMd(s)}: ${c}`
+      ),
+      "",
+      "Use /addprospect to add new contacts.",
+    ];
+    await sendMessage(chatId, lines.join("\n"));
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /addprospect ───────────────────────────────────────
+async function handleAddProspect(chatId: number, args: string) {
+  try {
+    if (!args) {
+      await sendMessage(
+        chatId,
+        "Usage: `/addprospect Name | email@example.com | 08012345678 | description`"
+      );
+      return;
+    }
+    const parts = args.split("|").map((s) => s.trim());
+    if (parts.length < 2) {
+      await sendMessage(chatId, "Need at least name and email separated by |");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("prospects")
+      .insert({
+        business_name: parts[0],
+        email: parts[1] || null,
+        phone: parts[2] || null,
+        notes: parts[3] || null,
+        status: "new",
+      })
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
     await sendMessage(
       chatId,
-      [
-        "🤖 *XTOP Retail Workforce*",
-        "",
-        "*Operations:*",
-        "/status — System health",
-        "/tasks — Task history",
-        "/discover — Find remote jobs",
-        "/report — Task report",
-        "",
-        "*Infrastructure:*",
-        "/infra — Full infrastructure status",
-        "/github — Repository health",
-        "/render — Render service status",
-        "/dbstatus — Database details",
-        "",
-        "*CRM:*",
-        "/crm — Pipeline dashboard",
-        "/addprospect — Add a prospect",
-        "/prospects — List prospects",
-        "/find \\<keyword\\> — Search prospects",
-        "/prospect \\<name\\> — Prospect details",
-        "/updatestatus \\<name\\> \\<status\\>",
-        "",
-        "*Outreach:*",
-        "/draft \\<name\\> — Generate email draft",
-        "/outreach — List pending drafts",
-        "/approve \\<id\\> — Approve a draft",
-        "/reject \\<id\\> — Reject a draft",
-        "/send \\<id\\> — Send approved draft",
-        "",
-        "Or type: Business / email / phone",
-      ].join("\n"),
-      { parseMode: "Markdown" }
+      `✅ Prospect added!\nID: \`${escapeMd(data.id)}\`\nName: ${escapeMd(data.business_name)}`
     );
-    return;
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
   }
+}
 
-  // ── STATUS ────────────────────────────────────
+// ── /prospects ─────────────────────────────────────────
+async function handleProspects(chatId: number) {
+  try {
+    const { data, error } = await supabase
+      .from("prospects")
+      .select("id, business_name, email, status")
+      .order("created_at", { ascending: false })
+      .limit(10);
 
-  if (lower === "/status") {
-    await sendMessage(chatId, "⏳ Checking system health...");
-    try {
-      const task = await createTask("health_check", {}, "telegram");
-      await processPendingTasks();
-      const result = await getTask(task.id);
-      if (result?.status === "completed" && result.result) {
-        const r = result.result;
-        await sendMessage(
-          chatId,
-          [
-            "✅ *System Status*",
-            "",
-            `Server: ${escapeMd(String(r.server || "online"))}`,
-            `Database: ${escapeMd(String(r.database || "connected"))}`,
-            `Saved jobs: ${r.jobCount ?? "?"}`,
-            `Time: ${escapeMd(String(r.timestamp || new Date().toISOString()))}`,
-          ].join("\n"),
-          { parseMode: "Markdown" }
-        );
-      } else {
-        await sendMessage(chatId, "⚠️ Health check not yet complete. Try again shortly.");
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown error";
-      await sendMessage(chatId, `❌ Health check failed: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── TASKS ─────────────────────────────────────
-
-  if (lower === "/tasks") {
-    try {
-      const tasks = await listRecentTasks(5);
-      if (tasks.length === 0) {
-        await sendMessage(chatId, "📋 No tasks recorded yet.");
-        return;
-      }
-      const lines = tasks.map((t) => {
-        const icon = t.status === "completed" ? "✅" : t.status === "failed" ? "❌" : t.status === "running" ? "🔄" : t.status === "pending" ? "⏳" : "📌";
-        const time = new Date(t.created_at).toLocaleString();
-        return `${icon} ${escapeMd(t.task_type)} — ${escapeMd(t.status)}\n   ${escapeMd(time)}`;
-      });
-      await sendMessage(chatId, `📋 *Recent Tasks*\n\n${lines.join("\n\n")}`, { parseMode: "Markdown" });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Could not load tasks: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── DISCOVER ──────────────────────────────────
-
-  if (lower === "/discover") {
-    await sendMessage(chatId, "🔍 Starting job discovery. This may take 30–60 seconds...");
-    try {
-      const task = await createTask("discover_jobs", {}, "telegram");
-      await processPendingTasks();
-      const result = await getTask(task.id);
-      if (result?.status === "completed" && result.result) {
-        const r = result.result;
-        await sendMessage(
-          chatId,
-          ["✅ *Job Discovery Complete*", "", `Matched: ${r.matched ?? "?"}`, `Saved: ${r.saved ?? "?"}`, `Updated: ${r.updated ?? "?"}`, `High fit: ${r.highSuitability ?? "?"}`, `Nigeria eligible: ${r.nigeriaEligible ?? "?"}`, "", "Open the dashboard for full details."].join("\n"),
-          { parseMode: "Markdown" }
-        );
-      } else if (result?.status === "failed") {
-        await sendMessage(chatId, `❌ Discovery failed: ${escapeMd(result.error || "unknown error")}`);
-      } else {
-        await sendMessage(chatId, "⏳ Discovery still running. Check /tasks later.");
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Discovery error: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── REPORT ────────────────────────────────────
-
-  if (lower === "/report") {
-    try {
-      const task = await createTask("task_report", {}, "telegram");
-      await processPendingTasks();
-      const result = await getTask(task.id);
-      if (result?.status === "completed" && result.result) {
-        const r = result.result;
-        const taskList = (r.tasks as Array<Record<string, unknown>>) || [];
-        if (taskList.length === 0) {
-          await sendMessage(chatId, "📊 No tasks completed yet.");
-          return;
-        }
-        const lines = taskList.map((t) => `${t.status === "completed" ? "✅" : "⏳"} ${escapeMd(String(t.type))} (${escapeMd(String(t.status))})`);
-        await sendMessage(chatId, `📊 *Task Report*\n\n${lines.join("\n")}`, { parseMode: "Markdown" });
-      } else {
-        await sendMessage(chatId, "⏳ Report generating. Try again shortly.");
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Report error: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── INFRASTRUCTURE: FULL STATUS ───────────────
-
-  if (lower === "/infra") {
-    await sendMessage(chatId, "⏳ Checking all infrastructure...");
-    try {
-      const status = await getFullInfraStatus();
-      const lines = [
-        "🏗️ *Infrastructure Status*",
-        "",
-        `${status.github.ok ? "✅" : "❌"} *GitHub:* ${escapeMd(status.github.message)}`,
-        `${status.render.ok ? "✅" : "❌"} *Render:* ${escapeMd(status.render.message)}`,
-        `${status.supabase.ok ? "✅" : "❌"} *Supabase:* ${escapeMd(status.supabase.message)}`,
-        "",
-        `Time: ${escapeMd(new Date().toISOString())}`,
-      ];
-      await sendMessage(chatId, lines.join("\n"), { parseMode: "Markdown" });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Infra check failed: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── INFRASTRUCTURE: GITHUB ────────────────────
-
-  if (lower === "/github") {
-    await sendMessage(chatId, "⏳ Checking GitHub...");
-    try {
-      const repo = await getRepoInfo("erodion4776", "xtop-career-agent-");
-      const commits = await getRecentCommits("erodion4776", "xtop-career-agent-", 3);
-
-      const commitLines = commits.length > 0
-        ? commits.map((c) => `  \`${c.sha}\` ${escapeMd(c.message)}\n   by ${escapeMd(c.author)} — ${c.date.slice(0, 10)}`)
-        : "  No recent commits.";
-
-      await sendMessage(
-        chatId,
-        [
-          `🐙 *GitHub: ${escapeMd(repo.fullName)}*`,
-          "",
-          `Branch: ${escapeMd(repo.defaultBranch)}`,
-          `Open issues: ${repo.openIssues}`,
-          `Visibility: ${repo.private ? "Private" : "Public"}`,
-          `Updated: ${escapeMd(repo.updatedAt.slice(0, 10))}`,
-          "",
-          "*Recent commits:*",
-          commitLines.join("\n"),
-        ].join("\n"),
-        { parseMode: "Markdown" }
-      );
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ GitHub error: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── INFRASTRUCTURE: RENDER ────────────────────
-
-  if (lower === "/render") {
-    await sendMessage(chatId, "⏳ Checking Render...");
-    try {
-      const svc = await getRenderService("srv-dbf6gi0ae00c73ev0l9g");
-      const deploys = await getRenderDeploys("srv-dbf6gi0ae00c73ev0l9g", 3);
-
-      const deployLines = deploys.length > 0
-        ? deploys.map((d) => {
-            const icon = d.status === "live" ? "✅" : d.status === "build_failed" ? "❌" : d.status === "created" ? "🔄" : "📌";
-            return `  ${icon} ${escapeMd(d.status)} — ${d.commitId || "N/A"} (${d.createdAt.slice(0, 10)})`;
-          })
-        : ["  No recent deploys."];
-
-      await sendMessage(
-        chatId,
-        [
-          `🖥️ *Render: ${escapeMd(svc.name)}*`,
-          "",
-          `Type: ${escapeMd(svc.type)}`,
-          `Status: ${escapeMd(svc.status)}`,
-          `Updated: ${escapeMd(svc.updatedAt.slice(0, 10))}`,
-          "",
-          "*Recent deploys:*",
-          deployLines.join("\n"),
-        ].join("\n"),
-        { parseMode: "Markdown" }
-      );
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Render error: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── INFRASTRUCTURE: DATABASE ──────────────────
-
-  if (lower === "/dbstatus") {
-    await sendMessage(chatId, "⏳ Checking database...");
-    try {
-      const health = await getSupabaseHealth();
-
-      if (!health.connected) {
-        await sendMessage(chatId, `❌ Database disconnected: ${escapeMd(health.error || "unknown")}`);
-        return;
-      }
-
-      const lines = health.tables.map((t) => {
-        const icon = t.count >= 0 ? "📊" : "⚠️";
-        const countStr = t.count >= 0 ? String(t.count) : "error";
-        return `  ${icon} ${escapeMd(t.table)}: ${countStr} rows`;
-      });
-
-      await sendMessage(
-        chatId,
-        ["✅ *Supabase Database*", "", lines.join("\n"), "", `Checked: ${escapeMd(new Date().toISOString())}`].join("\n"),
-        { parseMode: "Markdown" }
-      );
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ DB error: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── CRM: DASHBOARD ────────────────────────────
-
-  if (lower === "/crm") {
-    try {
-      const stats = await getCrmStats();
-      const statusLines = Object.entries(stats.byStatus).map(([s, count]) => `  ${escapeMd(s)}: ${count}`).join("\n");
-      const recentLines = stats.recentProspects.length > 0
-        ? stats.recentProspects.map((p) => `  ${escapeMd(p.business_name)} (score: ${p.score}, ${escapeMd(p.status)})`).join("\n")
-        : "  No prospects yet.";
-      await sendMessage(
-        chatId,
-        ["📊 *CRM Dashboard*", "", `Total prospects: ${stats.total}`, `Pending outreach: ${stats.pendingOutreach}`, "", "*By status:*", statusLines || "  None", "", "*Recent prospects:*", recentLines].join("\n"),
-        { parseMode: "Markdown" }
-      );
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ CRM error: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── CRM: ADD PROSPECT ─────────────────────────
-
-  if (lower.startsWith("/addprospect")) {
-    const raw = text.slice("/addprospect".length).trim();
-    if (!raw) {
-      await sendMessage(chatId, ["📝 *Add a Prospect*", "", "Format:", "`/addprospect Business Name | email | phone`"].join("\n"), { parseMode: "Markdown" });
+    if (error) throw new Error(error.message);
+    if (!data?.length) {
+      await sendMessage(chatId, "No prospects yet. Use /addprospect.");
       return;
     }
-    const parts = raw.split("|").map((s) => s.trim());
-    const businessName = parts[0];
-    const email = parts[1] || undefined;
-    const phone = parts[2] || undefined;
-    const website = parts[3] || undefined;
-    if (!businessName) {
-      await sendMessage(chatId, "❌ Business name is required.");
+
+    const lines = data.map(
+      (p: any) =>
+        `• *${escapeMd(p.business_name)}*\n  ${escapeMd(p.email || "no email")} | ${escapeMd(p.status)} | \`${escapeMd(p.id.slice(0, 8))}\``
+    );
+    await sendMessage(chatId, `📇 *Recent Prospects*\n\n${lines.join("\n\n")}`);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /find ──────────────────────────────────────────────
+async function handleFind(chatId: number, args: string) {
+  try {
+    if (!args) {
+      await sendMessage(chatId, "Usage: `/find search term`");
       return;
     }
-    try {
-      const prospect = await addProspect({ business_name: businessName, email, phone, website, source: "telegram" });
-      await sendMessage(
-        chatId,
-        ["✅ *Prospect Added*", "", `Business: ${escapeMd(prospect.business_name)}`, `Score: ${prospect.score}/100`, `Status: ${escapeMd(prospect.status)}`, `City: ${escapeMd(prospect.city)}`, email ? `Email: ${escapeMd(email)}` : "", phone ? `Phone: ${escapeMd(phone)}` : "", "", `Next: /draft ${escapeMd(prospect.business_name)}`].filter(Boolean).join("\n"),
-        { parseMode: "Markdown" }
-      );
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Could not add prospect: ${escapeMd(msg)}`);
-    }
-    return;
-  }
+    const { data, error } = await supabase
+      .from("prospects")
+      .select("id, business_name, email, status")
+      .ilike("business_name", `%${args}%`)
+      .limit(10);
 
-  // ── CRM: LIST PROSPECTS ───────────────────────
-
-  if (lower.startsWith("/prospects")) {
-    const query = text.slice("/prospects".length).trim();
-    try {
-      const prospects = query ? await searchProspects(query) : await listProspects(10);
-      if (prospects.length === 0) {
-        await sendMessage(chatId, query ? `🔍 No prospects matching "${escapeMd(query)}".` : "📋 No prospects yet. Use /addprospect to add one.");
-        return;
-      }
-      const lines = prospects.map((p) => {
-        const icon = p.status === "won" ? "🏆" : p.status === "lost" ? "❌" : p.status === "negotiating" ? "🤝" : p.status === "proposal_sent" ? "📄" : p.status === "contacted" ? "📞" : "🆕";
-        return `${icon} ${escapeMd(p.business_name)}\n   Score: ${p.score} | ${escapeMd(p.status)} | ${escapeMd(p.city)}`;
-      });
-      await sendMessage(chatId, `📋 *Prospects*\n\n${lines.join("\n\n")}`, { parseMode: "Markdown" });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Could not load prospects: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── CRM: FIND ─────────────────────────────────
-
-  if (lower.startsWith("/find ")) {
-    const query = text.slice("/find ".length).trim();
-    if (!query) {
-      await sendMessage(chatId, "Usage: `/find keyword`", { parseMode: "Markdown" });
+    if (error) throw new Error(error.message);
+    if (!data?.length) {
+      await sendMessage(chatId, `No prospects matching "${escapeMd(args)}".`);
       return;
     }
-    try {
-      const results = await searchProspects(query);
-      if (results.length === 0) {
-        await sendMessage(chatId, `🔍 No prospects found for "${escapeMd(query)}".`);
-        return;
-      }
-      const lines = results.map((p) => `• ${escapeMd(p.business_name)} (${escapeMd(p.status)}, score: ${p.score})`);
-      await sendMessage(chatId, `🔍 *Search Results*\n\n${lines.join("\n")}`, { parseMode: "Markdown" });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Search error: ${escapeMd(msg)}`);
-    }
-    return;
+
+    const lines = data.map(
+      (p: any) =>
+        `• *${escapeMd(p.business_name)}* — ${escapeMd(p.status)} \`${escapeMd(p.id.slice(0, 8))}\``
+    );
+    await sendMessage(chatId, `🔍 *Search Results*\n\n${lines.join("\n")}`);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
   }
+}
 
-  // ── CRM: PROSPECT DETAILS ─────────────────────
-
-  if (lower.startsWith("/prospect ")) {
-    const name = text.slice("/prospect ".length).trim();
-    if (!name) {
-      await sendMessage(chatId, "Usage: `/prospect Business Name`", { parseMode: "Markdown" });
+// ── /prospect ──────────────────────────────────────────
+async function handleProspect(chatId: number, args: string) {
+  try {
+    const idPrefix = args.trim();
+    if (!idPrefix) {
+      await sendMessage(chatId, "Usage: `/prospect <id-prefix>`");
       return;
     }
-    try {
-      const prospect = await findProspectByName(name);
-      if (!prospect) {
-        await sendMessage(chatId, `🔍 No prospect found matching "${escapeMd(name)}".`);
-        return;
-      }
-      const { outreach } = await getProspectWithHistory(prospect.id);
-      const outreachLines = outreach.length > 0
-        ? outreach.map((o) => `  ${o.status === "sent" ? "📤" : o.status === "approved" ? "✅" : o.status === "draft" ? "📝" : "❌"} ${escapeMd(o.type)} — ${escapeMd(o.status)} (${new Date(o.created_at).toLocaleDateString()})`).join("\n")
-        : "  No outreach yet.";
-      await sendMessage(
-        chatId,
-        [`🏢 *${escapeMd(prospect.business_name)}*`, "", `Contact: ${escapeMd(prospect.contact_name || "N/A")}`, `Email: ${escapeMd(prospect.email || "N/A")}`, `Phone: ${escapeMd(prospect.phone || "N/A")}`, `Website: ${escapeMd(prospect.website || "N/A")}`, `City: ${escapeMd(prospect.city)}`, `Industry: ${escapeMd(prospect.industry || "N/A")}`, `Score: ${prospect.score}/100`, `Status: ${escapeMd(prospect.status)}`, `Services: ${prospect.services_needed.length > 0 ? escapeMd(prospect.services_needed.join(", ")) : "N/A"}`, "", "*Outreach history:*", outreachLines, "", `ID: \`${prospect.id.slice(0, 8)}\``].join("\n"),
-        { parseMode: "Markdown" }
-      );
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Error: ${escapeMd(msg)}`);
+
+    const { data, error } = await supabase
+      .from("prospects")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (error) throw new Error(error.message);
+    const match = data?.find((p: any) => p.id.startsWith(idPrefix));
+    if (!match) {
+      await sendMessage(chatId, `No prospect found matching \`${escapeMd(idPrefix)}\`.`);
+      return;
     }
-    return;
+
+    const lines = [
+      `📇 *${escapeMd(match.business_name)}*`,
+      "",
+      `*Email:* ${escapeMd(match.email || "N/A")}`,
+      `*Phone:* ${escapeMd(match.phone || "N/A")}`,
+      `*Status:* ${escapeMd(match.status)}`,
+      `*Notes:* ${escapeMd(match.notes || "None")}`,
+      `*ID:* \`${escapeMd(match.id)}\``,
+    ];
+    await sendMessage(chatId, lines.join("\n"));
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
   }
+}
 
-  // ── CRM: UPDATE STATUS ────────────────────────
-
-  if (lower.startsWith("/updatestatus ")) {
-    const raw = text.slice("/updatestatus ".length).trim();
-    const parts = raw.split(/\s+/);
+// ── /updatestatus ──────────────────────────────────────
+async function handleUpdateStatus(chatId: number, args: string) {
+  try {
+    const parts = args.split(/\s+/);
     if (parts.length < 2) {
-      await sendMessage(chatId, ["Usage: `/updatestatus BusinessName newstatus`", "", "Statuses: new, contacted, qualified, proposal\\_sent, negotiating, won, lost"].join("\n"), { parseMode: "Markdown" });
+      await sendMessage(chatId, "Usage: `/updatestatus <id-prefix> <new-status>`");
       return;
     }
-    const newStatus = parts[parts.length - 1].toLowerCase();
-    const name = parts.slice(0, -1).join(" ");
-    try {
-      const prospect = await findProspectByName(name);
-      if (!prospect) {
-        await sendMessage(chatId, `🔍 No prospect found matching "${escapeMd(name)}".`);
-        return;
-      }
-      await changeProspectStatus(prospect.id, newStatus);
-      await sendMessage(chatId, `✅ ${escapeMd(prospect.business_name)} status updated to *${escapeMd(newStatus)}*.`, { parseMode: "Markdown" });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ ${escapeMd(msg)}`);
+    const idPrefix = parts[0];
+    const newStatus = parts.slice(1).join(" ");
+
+    const { data: all } = await supabase
+      .from("prospects")
+      .select("id, business_name")
+      .limit(50);
+
+    const match = all?.find((p: any) => p.id.startsWith(idPrefix));
+    if (!match) {
+      await sendMessage(chatId, `No prospect found matching \`${escapeMd(idPrefix)}\`.`);
+      return;
     }
-    return;
+
+    const { error } = await supabase
+      .from("prospects")
+      .update({ status: newStatus })
+      .eq("id", match.id);
+
+    if (error) throw new Error(error.message);
+    await sendMessage(
+      chatId,
+      `✅ ${escapeMd(match.business_name)} status → ${escapeMd(newStatus)}`
+    );
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
   }
+}
 
-  // ── OUTREACH: GENERATE DRAFT ──────────────────
-
-  if (lower.startsWith("/draft ")) {
-    const name = text.slice("/draft ".length).trim();
-    if (!name) {
-      await sendMessage(chatId, "Usage: `/draft Business Name`", { parseMode: "Markdown" });
+// ── /draft ─────────────────────────────────────────────
+async function handleDraft(chatId: number, args: string) {
+  try {
+    const idPrefix = args.trim();
+    if (!idPrefix) {
+      await sendMessage(chatId, "Usage: `/draft <prospect-id-prefix>`");
       return;
     }
-    await sendMessage(chatId, `⏳ Generating outreach draft for "${escapeMd(name)}"...`);
-    try {
-      const prospect = await findProspectByName(name);
-      if (!prospect) {
-        await sendMessage(chatId, `🔍 No prospect found matching "${escapeMd(name)}". Add them first with /addprospect.`);
-        return;
-      }
-      if (!prospect.email) {
-        await sendMessage(chatId, `⚠️ ${escapeMd(prospect.business_name)} has no email address.`);
-        return;
-      }
-      const draft = await generateDraft(prospect.id);
+
+    // Find prospect (JS filter to avoid UUID LIKE issue)
+    const { data: allProspects } = await supabase
+      .from("prospects")
+      .select("id, business_name, email, notes")
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    const prospect = allProspects?.find((p: any) => p.id.startsWith(idPrefix));
+    if (!prospect) {
+      await sendMessage(chatId, `No prospect found matching \`${escapeMd(idPrefix)}\`.`);
+      return;
+    }
+    if (!prospect.email) {
+      await sendMessage(chatId, `⚠️ ${escapeMd(prospect.business_name)} has no email address.`);
+      return;
+    }
+
+    // Check for existing drafts
+    const { data: existing } = await supabase
+      .from("outreach")
+      .select("id, status")
+      .eq("prospect_id", prospect.id)
+      .in("status", ["draft", "approved"]);
+
+    if (existing?.length) {
       await sendMessage(
         chatId,
-        ["📝 *Outreach Draft Ready*", "", `To: ${escapeMd(prospect.email)}`, `Subject: ${escapeMd(draft.subject || "(none)")}`, "", escapeMd(draft.body || "(empty)"), "", `Draft ID: \`${draft.id.slice(0, 8)}\``, "", "Next steps:", `/approve ${draft.id.slice(0, 8)} — approve for sending`, `/reject ${draft.id.slice(0, 8)} — discard this draft`].join("\n"),
-        { parseMode: "Markdown" }
+        `⚠️ Draft already exists for this prospect (\`${escapeMd(existing[0].id.slice(0, 8))}\`, status: ${escapeMd(existing[0].status)}).`
       );
-      await logAction("draft_generated", { prospectId: prospect.id, draftId: draft.id });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Draft error: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── OUTREACH: LIST DRAFTS ─────────────────────
-
-  if (lower === "/outreach") {
-    try {
-      const drafts = await listDrafts();
-      const approved = await listDrafts("approved");
-      if (drafts.length === 0 && approved.length === 0) {
-        await sendMessage(chatId, "📋 No pending drafts. Use `/draft Business Name` to create one.", { parseMode: "Markdown" });
-        return;
-      }
-      const lines: string[] = [];
-      if (approved.length > 0) {
-        lines.push("*Approved (ready to send):*");
-        for (const d of approved) {
-          lines.push(`  ✅ ${escapeMd(d.business_name || "Unknown")} — "${escapeMd(d.subject || "(no subject)")}"`, `     /send ${d.id.slice(0, 8)}`);
-        }
-        lines.push("");
-      }
-      if (drafts.length > 0) {
-        lines.push("*Drafts (awaiting approval):*");
-        for (const d of drafts) {
-          lines.push(`  📝 ${escapeMd(d.business_name || "Unknown")} — "${escapeMd(d.subject || "(no subject)")}"`, `     /approve ${d.id.slice(0, 8)}`);
-        }
-      }
-      await sendMessage(chatId, `📋 *Outreach Queue*\n\n${lines.join("\n")}`, { parseMode: "Markdown" });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
-      await sendMessage(chatId, `❌ Outreach error: ${escapeMd(msg)}`);
-    }
-    return;
-  }
-
-  // ── OUTREACH: APPROVE ─────────────────────────
-
-  if (lower.startsWith("/approve ")) {
-    const idPrefix = text.slice("/approve ".length).trim();
-    if (!idPrefix) {
-      await sendMessage(chatId, "Usage: `/approve draft-id`", { parseMode: "Markdown" });
       return;
     }
-    try {
-      const { data: drafts, error } = await supabase.from("outreach").select("id, subject, status").eq("status", "draft").order("created_at", { ascending: false }).limit(20);
-      if (error) throw new Error(error.message);
-      const match = (drafts || []).find((d) => d.id.startsWith(idPrefix));
-      if (!match) {
-        await sendMessage(chatId, `🔍 No draft found with ID "${escapeMd(idPrefix)}". Check /outreach.`);
-        return;
-      }
-      await approveDraft(match.id);
-      await sendMessage(chatId, ["✅ Draft approved.", `Subject: ${escapeMd(match.subject || "(none)")}`, "", `Send it with: /send ${idPrefix}`].join("\n"), { parseMode: "Markdown" });
-      await logAction("draft_approved", { draftId: match.id });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      await sendMessage(chatId, `❌ Approve error: ${escapeMd(msg)}`);
-    }
-    return;
+
+    // Generate draft content
+    const subject = `Partnership Opportunity — XTOP Digital Solutions`;
+    const body = [
+      `Dear ${prospect.business_name} Team,`,
+      "",
+      `I hope this message finds you well. I'm reaching out from XTOP Digital Solutions to explore how we can help you with a professional website and digital presence.`,
+      "",
+      `We specialize in building modern, mobile-friendly websites and digital tools for businesses like yours.`,
+      "",
+      `Would you be open to a brief conversation about how we can support your growth?`,
+      "",
+      `Best regards,`,
+      `XTOP Digital Solutions`,
+    ].join("\n");
+
+    const { data: draft, error } = await supabase
+      .from("outreach")
+      .insert({
+        prospect_id: prospect.id,
+        subject,
+        body,
+        status: "draft",
+      })
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    const lines = [
+      `📝 *Draft Created*`,
+      "",
+      `*To:* ${escapeMd(prospect.email)}`,
+      `*Subject:* ${escapeMd(subject)}`,
+      `*ID:* \`${escapeMd(draft.id.slice(0, 8))}\``,
+      "",
+      `Use /approve ${draft.id.slice(0, 8)} to approve, then /send ${draft.id.slice(0, 8)} to send.`,
+    ];
+    await sendMessage(chatId, lines.join("\n"));
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
   }
+}
 
-  // ── OUTREACH: REJECT ──────────────────────────
+// ── /outreach ──────────────────────────────────────────
+async function handleOutreach(chatId: number) {
+  try {
+    const { data: drafts, error } = await supabase
+      .from("outreach")
+      .select("id, prospect_id, subject, status, created_at")
+      .order("created_at", { ascending: false })
+      .limit(10);
 
-  if (lower.startsWith("/reject ")) {
-    const idPrefix = text.slice("/reject ".length).trim();
-    if (!idPrefix) {
-      await sendMessage(chatId, "Usage: `/reject draft-id`", { parseMode: "Markdown" });
+    if (error) throw new Error(error.message);
+    if (!drafts?.length) {
+      await sendMessage(chatId, "No outreach drafts. Use /draft <prospect-id>.");
       return;
     }
-    try {
-      const { data: drafts, error } = await supabase.from("outreach").select("id, subject, status").in("status", ["draft", "approved"]).order("created_at", { ascending: false }).limit(20);
-      if (error) throw new Error(error.message);
-      const match = (drafts || []).find((d) => d.id.startsWith(idPrefix));
-      if (!match) {
-        await sendMessage(chatId, `🔍 No active draft found with ID "${escapeMd(idPrefix)}".`);
-        return;
-      }
-      await rejectDraft(match.id);
-      await sendMessage(chatId, `❌ Draft rejected: "${escapeMd(match.subject || "(none)")}".`, { parseMode: "Markdown" });
-      await logAction("draft_rejected", { draftId: match.id });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      await sendMessage(chatId, `❌ Reject error: ${escapeMd(msg)}`);
-    }
-    return;
+
+    // Fetch prospect names separately (avoid join issues)
+    const prospectIds = [...new Set(drafts.map((d: any) => d.prospect_id))];
+    const { data: prospects } = await supabase
+      .from("prospects")
+      .select("id, business_name")
+      .in("id", prospectIds);
+
+    const nameMap = new Map(
+      (prospects || []).map((p: any) => [p.id, p.business_name])
+    );
+
+    const lines = drafts.map((d: any) => {
+      const icon =
+        d.status === "sent" ? "✅" : d.status === "approved" ? "👍" : "📝";
+      const name = nameMap.get(d.prospect_id) || "Unknown";
+      return `${icon} *${escapeMd(name)}* — ${escapeMd(d.status)}\n  \`${escapeMd(d.id.slice(0, 8))}\` | ${escapeMd(d.created_at?.slice(0, 10) || "?")}`;
+    });
+
+    await sendMessage(chatId, `📬 *Outreach Drafts*\n\n${lines.join("\n\n")}`);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
   }
+}
 
-  // ── OUTREACH: SEND ────────────────────────────
-
-  if (lower.startsWith("/send ")) {
-    const idPrefix = text.slice("/send ".length).trim();
+// ── /approve ───────────────────────────────────────────
+async function handleApprove(chatId: number, args: string) {
+  try {
+    const idPrefix = args.trim();
     if (!idPrefix) {
-      await sendMessage(chatId, "Usage: `/send draft-id`", { parseMode: "Markdown" });
+      await sendMessage(chatId, "Usage: `/approve <draft-id-prefix>`");
       return;
     }
-    await sendMessage(chatId, "⏳ Sending email...");
+
+    // Fetch recent drafts and filter in JS (UUID LIKE fails in Postgres)
+    const { data: drafts, error: fetchErr } = await supabase
+      .from("outreach")
+      .select("id, status, prospect_id, subject")
+      .eq("status", "draft")
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (fetchErr) throw new Error(fetchErr.message);
+    const draft = drafts?.find((d: any) => d.id.startsWith(idPrefix));
+    if (!draft) {
+      await sendMessage(chatId, `No draft found matching \`${escapeMd(idPrefix)}\` with status "draft".`);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("outreach")
+      .update({ status: "approved" })
+      .eq("id", draft.id);
+
+    if (error) throw new Error(error.message);
+    await sendMessage(
+      chatId,
+      `✅ Draft \`${escapeMd(draft.id.slice(0, 8))}\` approved.\nUse /send ${draft.id.slice(0, 8)} to send it.`
+    );
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /reject ────────────────────────────────────────────
+async function handleReject(chatId: number, args: string) {
+  try {
+    const idPrefix = args.trim();
+    if (!idPrefix) {
+      await sendMessage(chatId, "Usage: `/reject <draft-id-prefix>`");
+      return;
+    }
+
+    const { data: drafts, error: fetchErr } = await supabase
+      .from("outreach")
+      .select("id, status")
+      .in("status", ["draft", "approved"])
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (fetchErr) throw new Error(fetchErr.message);
+    const draft = drafts?.find((d: any) => d.id.startsWith(idPrefix));
+    if (!draft) {
+      await sendMessage(chatId, `No active draft found matching \`${escapeMd(idPrefix)}\`.`);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("outreach")
+      .update({ status: "rejected" })
+      .eq("id", draft.id);
+
+    if (error) throw new Error(error.message);
+    await sendMessage(chatId, `🚫 Draft \`${escapeMd(draft.id.slice(0, 8))}\` rejected.`);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /send ──────────────────────────────────────────────
+async function handleSend(chatId: number, args: string) {
+  try {
+    const idPrefix = args.trim();
+    if (!idPrefix) {
+      await sendMessage(chatId, "Usage: `/send <draft-id-prefix>`");
+      return;
+    }
+
+    // Step 1: Find the draft
+    await sendMessage(chatId, "Step 1/3: Finding draft...");
+    const { data: drafts, error: fetchErr } = await supabase
+      .from("outreach")
+      .select("id, status, prospect_id, subject, body")
+      .eq("status", "approved")
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (fetchErr) throw new Error(`Fetch error: ${fetchErr.message}`);
+    const draft = drafts?.find((d: any) => d.id.startsWith(idPrefix));
+    if (!draft) {
+      await sendMessage(
+        chatId,
+        `No approved draft found matching \`${escapeMd(idPrefix)}\`. Use /approve first.`
+      );
+      return;
+    }
+
+    // Step 2: Get prospect email (separate query to avoid join issues)
+    await sendMessage(chatId, "Step 2/3: Looking up prospect...");
+    const { data: prospect, error: prospectErr } = await supabase
+      .from("prospects")
+      .select("business_name, email")
+      .eq("id", draft.prospect_id)
+      .single();
+
+    if (prospectErr) throw new Error(`Prospect lookup failed: ${prospectErr.message}`);
+    if (!prospect?.email) {
+      await sendMessage(chatId, "⚠️ Prospect has no email address.");
+      return;
+    }
+
+    // Step 3: Send via Gmail
+    await sendMessage(chatId, `Step 3/3: Sending to ${escapeMd(prospect.email)}...`);
+
     try {
-      const { data: drafts, error } = await supabase.from("outreach").select("id").eq("status", "approved").order("created_at", { ascending: false }).limit(20);
-      if (error) throw new Error(error.message);
-      const match = (drafts || []).find((d) => d.id.startsWith(idPrefix));
-      if (!match) {
-        await sendMessage(chatId, `🔍 No approved draft found with ID "${escapeMd(idPrefix)}". Approve it first.`);
-        return;
-      }
-      const result = await sendDraft(match.id);
-      await sendMessage(chatId, ["✅ *Email Sent*", "", `To: ${escapeMd(result.recipient)}`, `Subject: ${escapeMd(result.subject)}`, "", "The prospect status has been updated to 'contacted'."].join("\n"), { parseMode: "Markdown" });
-      await logAction("email_sent", { draftId: match.id, recipient: result.recipient });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      await sendMessage(chatId, `❌ Send failed: ${escapeMd(msg)}`);
+      const { sendEmail } = await import("./outreach-engine.js");
+      await sendEmail(draft.id, prospect.email, draft.subject, draft.body);
+    } catch (sendErr: any) {
+      throw new Error(`Send failed: ${sendErr.message}`);
     }
-    return;
+
+    await supabase
+      .from("outreach")
+      .update({ status: "sent", sent_at: new Date().toISOString() })
+      .eq("id", draft.id);
+
+    await sendMessage(
+      chatId,
+      `✅ Email sent to ${escapeMd(prospect.email)}!\nDraft: \`${escapeMd(draft.id.slice(0, 8))}\``
+    );
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
   }
+}
 
-  // ── NATURAL LANGUAGE: AUTO-DETECT PROSPECTS ───
+// ── Natural Language Prospect Detection ────────────────
+async function detectProspect(chatId: number, text: string): Promise<boolean> {
+  const emailMatch = text.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+  const phoneMatch = text.match(/(?:\+?234|0)\d{9,10}/);
 
-  const emailPattern = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
-  const phonePattern = /(?:\+?234|0)\d{9,10}/;
-  const hasEmail = emailPattern.test(text);
-  const hasPhone = phonePattern.test(text);
+  if (!emailMatch && !phoneMatch) return false;
 
-  if (hasEmail || hasPhone) {
-    const parts = text.split(/[/|,]/).map((s) => s.trim()).filter(Boolean);
-    if (parts.length >= 1) {
-      const businessName = parts[0].replace(emailPattern, "").replace(phonePattern, "").trim();
-      const email = parts.find((p) => emailPattern.test(p))?.match(emailPattern)?.[0];
-      const phone = parts.find((p) => phonePattern.test(p))?.match(phonePattern)?.[0];
-      if (businessName.length >= 2) {
-        try {
-          const prospect = await addProspect({ business_name: businessName, email, phone, source: "telegram_natural" });
-          await sendMessage(
-            chatId,
-            ["✅ *Prospect Added* (auto-detected)", "", `Business: ${escapeMd(prospect.business_name)}`, `Score: ${prospect.score}/100`, `Status: ${escapeMd(prospect.status)}`, email ? `Email: ${escapeMd(email)}` : "", phone ? `Phone: ${escapeMd(phone)}` : "", "", `Next: /draft ${escapeMd(prospect.business_name)}`].filter(Boolean).join("\n"),
-            { parseMode: "Markdown" }
-          );
-          return;
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : "unknown";
-          await sendMessage(chatId, `⚠️ Auto-detect failed: ${escapeMd(msg)}`);
-          return;
-        }
-      }
-    }
-  }
+  const lines = text.split("\n").filter((l) => l.trim());
+  const name = lines[0]?.trim() || "Unknown";
 
-  // ── NATURAL LANGUAGE FALLBACK ─────────────────
+  const { data, error } = await supabase
+    .from("prospects")
+    .insert({
+      business_name: name.slice(0, 100),
+      email: emailMatch?.[0] || null,
+      phone: phoneMatch?.[0] || null,
+      notes: text.slice(0, 500),
+      status: "new",
+    })
+    .select()
+    .single();
+
+  if (error) return false;
 
   await sendMessage(
     chatId,
-    ["📝 I received your message:", `"${escapeMd(text.slice(0, 200))}"`, "", "Use /help to see available commands."].join("\n")
+    `📇 Auto-detected prospect!\n*${escapeMd(data.business_name)}* saved.\nID: \`${escapeMd(data.id.slice(0, 8))}\``
   );
-  await logAction("unrecognised_command", { text: text.slice(0, 200) });
+  return true;
 }
 
-async function handleCallback(callback: Record<string, unknown>): Promise<void> {
-  const from = callback.from as Record<string, unknown> | undefined;
-  const data = callback.data as string | undefined;
-  const queryId = callback.id as string;
-  if (!from || !queryId) return;
-  const userId = from.id as number;
-  if (!isOwner(userId)) {
-    await answerCallback(queryId, "Unauthorised.");
+// ── Main Router ────────────────────────────────────────
+export async function handleMessage(
+  chatId: number,
+  text: string,
+  from?: { id?: number; first_name?: string }
+) {
+  const { cmd, args } = parseCmd(text);
+
+  // ── Operations ──
+  if (cmd === "/start" || cmd === "/help") return handleStart(chatId);
+  if (cmd === "/status") return handleStatus(chatId);
+  if (cmd === "/tasks") return handleTasks(chatId);
+  if (cmd === "/discover") return handleDiscover(chatId);
+  if (cmd === "/report") return handleReport(chatId);
+
+  // ── Infrastructure ──
+  if (cmd === "/infra") return handleInfra(chatId);
+  if (cmd === "/github") return handleGithub(chatId);
+  if (cmd === "/render") return handleRenderCmd(chatId);
+  if (cmd === "/dbstatus") return handleDbStatus(chatId);
+
+  // ── CRM ──
+  if (cmd === "/crm") return handleCrm(chatId);
+  if (cmd === "/addprospect") return handleAddProspect(chatId, args);
+  if (cmd === "/prospects") return handleProspects(chatId);
+  if (cmd === "/find") return handleFind(chatId, args);
+  if (cmd === "/prospect") return handleProspect(chatId, args);
+  if (cmd === "/updatestatus") return handleUpdateStatus(chatId, args);
+
+  // ── Outreach ──
+  if (cmd === "/draft") return handleDraft(chatId, args);
+  if (cmd === "/outreach") return handleOutreach(chatId);
+  if (cmd === "/approve") return handleApprove(chatId, args);
+  if (cmd === "/reject") return handleReject(chatId, args);
+  if (cmd === "/send") return handleSend(chatId, args);
+
+  // ── Dev Agent ──
+  const devCmds = [
+    "/repos",
+    "/browse",
+    "/readfile",
+    "/analyze",
+    "/fix",
+    "/deploy",
+    "/ci",
+    "/devstatus",
+  ];
+  if (devCmds.includes(cmd)) {
+    await handleDevCommand(chatId, cmd, args, text);
     return;
   }
-  if (!data) {
-    await answerCallback(queryId, "No action data.");
-    return;
+
+  // ── Natural Language ──
+  const detected = await detectProspect(chatId, text);
+  if (!detected) {
+    await sendMessage(
+      chatId,
+      "🤔 I didn't recognize that command. Send /start to see what I can do."
+    );
   }
-  await answerCallback(queryId, `Action "${data}" received. Button handlers coming soon.`);
 }

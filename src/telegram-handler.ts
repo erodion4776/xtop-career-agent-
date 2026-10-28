@@ -113,7 +113,7 @@ async function handleDiscover(chatId: number) {
 // ── /report ────────────────────────────────────────────
 async function handleReport(chatId: number) {
   try {
-    const { data: leads, count } = await supabase
+    const { count } = await supabase
       .from("job_leads")
       .select("id", { count: "exact", head: true });
 
@@ -147,7 +147,7 @@ async function handleInfra(chatId: number) {
 }
 
 // ── /github ────────────────────────────────────────────
-async function handleGithub(chatId: number) {
+async function handleGithubCmd(chatId: number) {
   try {
     const report = await getGithubHealth();
     await sendMessage(chatId, escapeMd(report));
@@ -189,7 +189,7 @@ async function handleCrm(chatId: number) {
 
     const counts: Record<string, number> = {};
     for (const p of byStatus || []) {
-      const s = p.status || "unknown";
+      const s = (p as any).status || "unknown";
       counts[s] = (counts[s] || 0) + 1;
     }
 
@@ -242,7 +242,7 @@ async function handleAddProspect(chatId: number, args: string) {
     if (error) throw new Error(error.message);
     await sendMessage(
       chatId,
-      `✅ Prospect added!\nID: \`${escapeMd(data.id)}\`\nName: ${escapeMd(data.business_name)}`
+      `✅ Prospect added!\nID: \`${escapeMd((data as any).id)}\`\nName: ${escapeMd((data as any).business_name)}`
     );
   } catch (e: any) {
     await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
@@ -264,8 +264,8 @@ async function handleProspects(chatId: number) {
       return;
     }
 
-    const lines = data.map(
-      (p: any) =>
+    const lines = (data as any[]).map(
+      (p) =>
         `• *${escapeMd(p.business_name)}*\n  ${escapeMd(p.email || "no email")} | ${escapeMd(p.status)} | \`${escapeMd(p.id.slice(0, 8))}\``
     );
     await sendMessage(chatId, `📇 *Recent Prospects*\n\n${lines.join("\n\n")}`);
@@ -293,8 +293,8 @@ async function handleFind(chatId: number, args: string) {
       return;
     }
 
-    const lines = data.map(
-      (p: any) =>
+    const lines = (data as any[]).map(
+      (p) =>
         `• *${escapeMd(p.business_name)}* — ${escapeMd(p.status)} \`${escapeMd(p.id.slice(0, 8))}\``
     );
     await sendMessage(chatId, `🔍 *Search Results*\n\n${lines.join("\n")}`);
@@ -319,7 +319,7 @@ async function handleProspect(chatId: number, args: string) {
       .limit(50);
 
     if (error) throw new Error(error.message);
-    const match = data?.find((p: any) => p.id.startsWith(idPrefix));
+    const match = (data as any[])?.find((p) => p.id.startsWith(idPrefix));
     if (!match) {
       await sendMessage(chatId, `No prospect found matching \`${escapeMd(idPrefix)}\`.`);
       return;
@@ -356,7 +356,7 @@ async function handleUpdateStatus(chatId: number, args: string) {
       .select("id, business_name")
       .limit(50);
 
-    const match = all?.find((p: any) => p.id.startsWith(idPrefix));
+    const match = (all as any[])?.find((p) => p.id.startsWith(idPrefix));
     if (!match) {
       await sendMessage(chatId, `No prospect found matching \`${escapeMd(idPrefix)}\`.`);
       return;
@@ -386,14 +386,13 @@ async function handleDraft(chatId: number, args: string) {
       return;
     }
 
-    // Find prospect (JS filter to avoid UUID LIKE issue)
     const { data: allProspects } = await supabase
       .from("prospects")
       .select("id, business_name, email, notes")
       .order("created_at", { ascending: false })
       .limit(50);
 
-    const prospect = allProspects?.find((p: any) => p.id.startsWith(idPrefix));
+    const prospect = (allProspects as any[])?.find((p) => p.id.startsWith(idPrefix));
     if (!prospect) {
       await sendMessage(chatId, `No prospect found matching \`${escapeMd(idPrefix)}\`.`);
       return;
@@ -403,22 +402,20 @@ async function handleDraft(chatId: number, args: string) {
       return;
     }
 
-    // Check for existing drafts
     const { data: existing } = await supabase
       .from("outreach")
       .select("id, status")
       .eq("prospect_id", prospect.id)
       .in("status", ["draft", "approved"]);
 
-    if (existing?.length) {
+    if ((existing as any[])?.length) {
       await sendMessage(
         chatId,
-        `⚠️ Draft already exists for this prospect (\`${escapeMd(existing[0].id.slice(0, 8))}\`, status: ${escapeMd(existing[0].status)}).`
+        `⚠️ Draft already exists (\`${escapeMd((existing as any)[0].id.slice(0, 8))}\`, status: ${escapeMd((existing as any)[0].status)}).`
       );
       return;
     }
 
-    // Generate draft content
     const subject = `Partnership Opportunity — XTOP Digital Solutions`;
     const body = [
       `Dear ${prospect.business_name} Team,`,
@@ -445,15 +442,16 @@ async function handleDraft(chatId: number, args: string) {
       .single();
 
     if (error) throw new Error(error.message);
+    const d = draft as any;
 
     const lines = [
       `📝 *Draft Created*`,
       "",
       `*To:* ${escapeMd(prospect.email)}`,
       `*Subject:* ${escapeMd(subject)}`,
-      `*ID:* \`${escapeMd(draft.id.slice(0, 8))}\``,
+      `*ID:* \`${escapeMd(d.id.slice(0, 8))}\``,
       "",
-      `Use /approve ${draft.id.slice(0, 8)} to approve, then /send ${draft.id.slice(0, 8)} to send.`,
+      `Use /approve ${d.id.slice(0, 8)} to approve, then /send ${d.id.slice(0, 8)} to send.`,
     ];
     await sendMessage(chatId, lines.join("\n"));
   } catch (e: any) {
@@ -471,23 +469,22 @@ async function handleOutreach(chatId: number) {
       .limit(10);
 
     if (error) throw new Error(error.message);
-    if (!drafts?.length) {
+    if (!(drafts as any[])?.length) {
       await sendMessage(chatId, "No outreach drafts. Use /draft <prospect-id>.");
       return;
     }
 
-    // Fetch prospect names separately (avoid join issues)
-    const prospectIds = [...new Set(drafts.map((d: any) => d.prospect_id))];
+    const prospectIds = [...new Set((drafts as any[]).map((d) => d.prospect_id))];
     const { data: prospects } = await supabase
       .from("prospects")
       .select("id, business_name")
       .in("id", prospectIds);
 
     const nameMap = new Map(
-      (prospects || []).map((p: any) => [p.id, p.business_name])
+      ((prospects as any[]) || []).map((p) => [p.id, p.business_name])
     );
 
-    const lines = drafts.map((d: any) => {
+    const lines = (drafts as any[]).map((d) => {
       const icon =
         d.status === "sent" ? "✅" : d.status === "approved" ? "👍" : "📝";
       const name = nameMap.get(d.prospect_id) || "Unknown";
@@ -509,7 +506,6 @@ async function handleApprove(chatId: number, args: string) {
       return;
     }
 
-    // Fetch recent drafts and filter in JS (UUID LIKE fails in Postgres)
     const { data: drafts, error: fetchErr } = await supabase
       .from("outreach")
       .select("id, status, prospect_id, subject")
@@ -518,7 +514,7 @@ async function handleApprove(chatId: number, args: string) {
       .limit(20);
 
     if (fetchErr) throw new Error(fetchErr.message);
-    const draft = drafts?.find((d: any) => d.id.startsWith(idPrefix));
+    const draft = (drafts as any[])?.find((d) => d.id.startsWith(idPrefix));
     if (!draft) {
       await sendMessage(chatId, `No draft found matching \`${escapeMd(idPrefix)}\` with status "draft".`);
       return;
@@ -556,7 +552,7 @@ async function handleReject(chatId: number, args: string) {
       .limit(20);
 
     if (fetchErr) throw new Error(fetchErr.message);
-    const draft = drafts?.find((d: any) => d.id.startsWith(idPrefix));
+    const draft = (drafts as any[])?.find((d) => d.id.startsWith(idPrefix));
     if (!draft) {
       await sendMessage(chatId, `No active draft found matching \`${escapeMd(idPrefix)}\`.`);
       return;
@@ -583,7 +579,6 @@ async function handleSend(chatId: number, args: string) {
       return;
     }
 
-    // Step 1: Find the draft
     await sendMessage(chatId, "Step 1/3: Finding draft...");
     const { data: drafts, error: fetchErr } = await supabase
       .from("outreach")
@@ -593,7 +588,7 @@ async function handleSend(chatId: number, args: string) {
       .limit(20);
 
     if (fetchErr) throw new Error(`Fetch error: ${fetchErr.message}`);
-    const draft = drafts?.find((d: any) => d.id.startsWith(idPrefix));
+    const draft = (drafts as any[])?.find((d) => d.id.startsWith(idPrefix));
     if (!draft) {
       await sendMessage(
         chatId,
@@ -602,7 +597,6 @@ async function handleSend(chatId: number, args: string) {
       return;
     }
 
-    // Step 2: Get prospect email (separate query to avoid join issues)
     await sendMessage(chatId, "Step 2/3: Looking up prospect...");
     const { data: prospect, error: prospectErr } = await supabase
       .from("prospects")
@@ -611,19 +605,48 @@ async function handleSend(chatId: number, args: string) {
       .single();
 
     if (prospectErr) throw new Error(`Prospect lookup failed: ${prospectErr.message}`);
-    if (!prospect?.email) {
+    const p = prospect as any;
+    if (!p?.email) {
       await sendMessage(chatId, "⚠️ Prospect has no email address.");
       return;
     }
 
-    // Step 3: Send via Gmail
-    await sendMessage(chatId, `Step 3/3: Sending to ${escapeMd(prospect.email)}...`);
+    await sendMessage(chatId, `Step 3/3: Sending to ${escapeMd(p.email)}...`);
 
+    // Try to send via outreach-engine (whatever export name it uses)
+    let sent = false;
     try {
-      const { sendEmail } = await import("./outreach-engine.js");
-      await sendEmail(draft.id, prospect.email, draft.subject, draft.body);
-    } catch (sendErr: any) {
-      throw new Error(`Send failed: ${sendErr.message}`);
+      const outreach = await import("./outreach-engine.js") as any;
+      // Try common function names
+      const sendFn = outreach.sendEmail || outreach.sendDraft || outreach.send || outreach.sendOutreach;
+      if (typeof sendFn === "function") {
+        await sendFn(draft.id, p.email, draft.subject, draft.body);
+        sent = true;
+      }
+    } catch {
+      // outreach-engine may not have a send function
+    }
+
+    // Fallback: try gmail module directly
+    if (!sent) {
+      try {
+        const gmail = await import("./gmail.js") as any;
+        const sendFn = gmail.sendEmail || gmail.sendMail || gmail.send || gmail.sendMessage;
+        if (typeof sendFn === "function") {
+          await sendFn(p.email, draft.subject, draft.body);
+          sent = true;
+        }
+      } catch {
+        // gmail module may have different API
+      }
+    }
+
+    if (!sent) {
+      await sendMessage(
+        chatId,
+        "⚠️ Could not find a working email send function. Check that Gmail OAuth is connected at /auth/google and that outreach-engine.ts exports a send function."
+      );
+      return;
     }
 
     await supabase
@@ -633,7 +656,7 @@ async function handleSend(chatId: number, args: string) {
 
     await sendMessage(
       chatId,
-      `✅ Email sent to ${escapeMd(prospect.email)}!\nDraft: \`${escapeMd(draft.id.slice(0, 8))}\``
+      `✅ Email sent to ${escapeMd(p.email)}!\nDraft: \`${escapeMd(draft.id.slice(0, 8))}\``
     );
   } catch (e: any) {
     await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
@@ -663,16 +686,17 @@ async function detectProspect(chatId: number, text: string): Promise<boolean> {
     .single();
 
   if (error) return false;
+  const d = data as any;
 
   await sendMessage(
     chatId,
-    `📇 Auto-detected prospect!\n*${escapeMd(data.business_name)}* saved.\nID: \`${escapeMd(data.id.slice(0, 8))}\``
+    `📇 Auto-detected prospect!\n*${escapeMd(d.business_name)}* saved.\nID: \`${escapeMd(d.id.slice(0, 8))}\``
   );
   return true;
 }
 
-// ── Main Router ────────────────────────────────────────
-export async function handleMessage(
+// ── Main Router (exported as handleUpdate for index.ts) ─
+export async function handleUpdate(
   chatId: number,
   text: string,
   from?: { id?: number; first_name?: string }
@@ -688,7 +712,7 @@ export async function handleMessage(
 
   // ── Infrastructure ──
   if (cmd === "/infra") return handleInfra(chatId);
-  if (cmd === "/github") return handleGithub(chatId);
+  if (cmd === "/github") return handleGithubCmd(chatId);
   if (cmd === "/render") return handleRenderCmd(chatId);
   if (cmd === "/dbstatus") return handleDbStatus(chatId);
 

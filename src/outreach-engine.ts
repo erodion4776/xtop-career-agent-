@@ -30,7 +30,7 @@ function templateDraft(prospect: Prospect): {
     "",
     `My name is Osarodion and I run XTOP Retail Technologies, a web development and automation agency based in Benin City.`,
     "",
-    `I noticed ${prospect.business_name} and believe we can help you ${services}.`,
+    `I noticed ${prospect.business_name} and believe we can help you with ${services}.`,
     "",
     `Here is what we offer:`,
     `- Professional, mobile-friendly websites`,
@@ -175,24 +175,42 @@ export async function listDrafts(
 ): Promise<
   Array<Outreach & { business_name?: string; email?: string }>
 > {
-  const { data, error } = await supabase
+  // Fetch drafts
+  const { data: drafts, error: dErr } = await supabase
     .from("outreach")
-    .select("*, prospects!inner(business_name, email)")
+    .select("*")
     .eq("status", status || "draft")
     .order("created_at", { ascending: false })
     .limit(10);
 
-  if (error) throw error;
+  if (dErr) throw dErr;
+  if (!drafts || drafts.length === 0) return [];
 
-  return (data ?? []).map((row) => ({
-    ...row,
-    business_name:
-      (row.prospects as Record<string, unknown>)
-        ?.business_name as string | undefined,
-    email:
-      (row.prospects as Record<string, unknown>)
-        ?.email as string | undefined,
-  }));
+  // Fetch prospect names separately to avoid join issues
+  const prospectIds = [
+    ...new Set(drafts.map((d) => d.prospect_id)),
+  ];
+
+  const { data: prospects } = await supabase
+    .from("prospects")
+    .select("id, business_name, email")
+    .in("id", prospectIds);
+
+  const prospectMap = new Map(
+    (prospects || []).map((p) => [
+      p.id,
+      { business_name: p.business_name, email: p.email },
+    ])
+  );
+
+  return drafts.map((d) => {
+    const p = prospectMap.get(d.prospect_id);
+    return {
+      ...d,
+      business_name: p?.business_name,
+      email: p?.email,
+    };
+  });
 }
 
 export async function approveDraft(
@@ -222,58 +240,84 @@ export async function rejectDraft(
 export async function sendDraft(
   id: string
 ): Promise<{ recipient: string; subject: string }> {
-  // Get the approved draft
+  // Step 1: Get the approved draft (simple query, no join)
   const { data: draft, error: dErr } = await supabase
     .from("outreach")
-    .select("*, prospects!inner(business_name, email, contact_name)")
+    .select("*")
     .eq("id", id)
-    .eq("status", "approved")
     .maybeSingle();
 
-  if (dErr) throw dErr;
+  if (dErr) throw new Error(`Database error: ${dErr.message}`);
   if (!draft) {
+    throw new Error("Draft not found.");
+  }
+  if (draft.status !== "approved") {
     throw new Error(
-      "Draft not found or not approved. Approve it first with /approve."
+      `Draft status is "${draft.status}", not "approved". Approve it first.`
     );
   }
 
-  const prospect = draft.prospects as Record<string, unknown>;
-  const recipient = prospect?.email as string | null;
+  // Step 2: Get the prospect separately
+  const { data: prospect, error: pErr } = await supabase
+    .from("prospects")
+    .select("*")
+    .eq("id", draft.prospect_id)
+    .maybeSingle();
 
+  if (pErr) throw new Error(`Prospect lookup failed: ${pErr.message}`);
+  if (!prospect) throw new Error("Prospect record not found.");
+
+  const recipient = prospect.email;
   if (!recipient) {
+    throw new Error("Prospect has no email address.");
+  }
+
+  // Step 3: Load Gmail modules dynamically
+  let sendGmail: typeof import("./gmail.js").sendGmail;
+  let getGmailConnection: typeof import("./gmail-store.js").getGmailConnection;
+
+  try {
+    const gmailModule = await import("./gmail.js");
+    sendGmail = gmailModule.sendGmail;
+
+    const storeModule = await import("./gmail-store.js");
+    getGmailConnection = storeModule.getGmailConnection;
+  } catch (importErr) {
     throw new Error(
-      "Prospect has no email address. Add one first."
+      `Gmail module failed to load: ${importErr instanceof Error ? importErr.message : String(importErr)}`
     );
   }
 
-  // Dynamic import to avoid crashing if Gmail env vars are missing
-  const { sendGmail } = await import("./gmail.js");
-  const { getGmailConnection } = await import(
-    "./gmail-store.js"
-  );
-
+  // Step 4: Get Gmail connection
   const allowedEmail =
     process.env.GMAIL_ALLOWED_EMAIL?.trim().toLowerCase();
 
   if (!allowedEmail) {
-    throw new Error("GMAIL_ALLOWED_EMAIL not configured.");
+    throw new Error("GMAIL_ALLOWED_EMAIL not configured in Render.");
   }
 
   const connection = await getGmailConnection(allowedEmail);
   if (!connection) {
     throw new Error(
-      "Gmail not connected. Visit /auth/google first."
+      "Gmail not connected. Visit https://xtop-career-agent.onrender.com/auth/google first."
     );
   }
 
-  await sendGmail(
-    connection.refreshToken,
-    recipient,
-    draft.subject || `Hello from XTOP Retail Technologies`,
-    draft.body || ""
-  );
+  // Step 5: Send the email
+  try {
+    await sendGmail(
+      connection.refreshToken,
+      recipient,
+      draft.subject || "Hello from XTOP Retail Technologies",
+      draft.body || ""
+    );
+  } catch (sendErr) {
+    throw new Error(
+      `Gmail API error: ${sendErr instanceof Error ? sendErr.message : String(sendErr)}`
+    );
+  }
 
-  // Mark as sent
+  // Step 6: Mark as sent
   await supabase
     .from("outreach")
     .update({
@@ -282,15 +326,16 @@ export async function sendDraft(
     })
     .eq("id", id);
 
-  // Update prospect status to contacted
-  await supabase
-    .from("prospects")
-    .update({
-      status: "contacted",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", draft.prospect_id)
-    .eq("status", "new");
+  // Step 7: Update prospect status if still "new"
+  if (prospect.status === "new") {
+    await supabase
+      .from("prospects")
+      .update({
+        status: "contacted",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", draft.prospect_id);
+  }
 
   return {
     recipient,

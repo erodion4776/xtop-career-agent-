@@ -1,0 +1,388 @@
+import { sendMessage } from "./telegram.js";
+import { supabase } from "./supabase.js";
+import * as gh from "./github-client.js";
+import * as nf from "./netlify-client.js";
+import * as analyzer from "./code-analyzer.js";
+
+function escapeMd(s: string): string {
+  return String(s).replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+}
+
+function parseArgs(text: string, cmd: string): string {
+  return text.replace(cmd, "").trim();
+}
+
+// ── /repos ─────────────────────────────────────────────
+export async function handleRepos(chatId: number) {
+  try {
+    const repos = await gh.listRepos(15);
+    if (!repos.length) {
+      await sendMessage(chatId, "No repositories found for this token.");
+      return;
+    }
+    const lines = repos.map((r: any) =>
+      `• *${escapeMd(r.full_name)}*\n  ${escapeMd(r.description || "No description")} | ${escapeMd(r.language || "?")} | ⭐${r.stargazers_count}`
+    );
+    await sendMessage(chatId, `📦 *Your Repositories*\n\n${lines.join("\n\n")}`);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /browse ────────────────────────────────────────────
+export async function handleBrowse(chatId: number, args: string) {
+  try {
+    let owner: string, repo: string, path = "";
+    const parts = args.split(/\s+/);
+    if (!parts[0]) {
+      owner = gh.DEFAULT_REPO.owner;
+      repo = gh.DEFAULT_REPO.repo;
+    } else if (parts[0].includes("/")) {
+      const r = gh.parseRepo(parts[0]);
+      owner = r.owner; repo = r.repo;
+      path = parts.slice(1).join("/");
+    } else {
+      owner = gh.DEFAULT_REPO.owner;
+      repo = gh.DEFAULT_REPO.repo;
+      path = parts.join("/");
+    }
+
+    const contents = await gh.getContents(owner, repo, path);
+    const items = Array.isArray(contents) ? contents : [contents];
+    const lines = items.map((item: any) => {
+      const icon = item.type === "dir" ? "📁" : "📄";
+      return `${icon} ${escapeMd(item.name)}`;
+    });
+    const header = path ? `${owner}/${repo}/${path}` : `${owner}/${repo}`;
+    await sendMessage(chatId, `📂 *${escapeMd(header)}*\n\n${lines.join("\n")}`);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /readfile ──────────────────────────────────────────
+export async function handleReadFile(chatId: number, args: string) {
+  try {
+    const parts = args.split(/\s+/);
+    if (parts.length < 2) {
+      await sendMessage(chatId, "Usage: `/readfile owner/repo path/to/file.ts`");
+      return;
+    }
+    const r = gh.parseRepo(parts[0]);
+    const filePath = parts.slice(1).join("/");
+    const file = await gh.getFile(r.owner, r.repo, filePath);
+    const preview = file.content.length > 3500
+      ? file.content.slice(0, 3500) + "\n\n... (truncated)"
+      : file.content;
+    await sendMessage(chatId, `📄 *${escapeMd(filePath)}* (${file.size} bytes)\n\`\`\`\n${preview}\n\`\`\``);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /analyze ───────────────────────────────────────────
+export async function handleAnalyze(chatId: number, args: string) {
+  try {
+    const parts = args.split(/\s+/);
+    if (parts.length < 2) {
+      await sendMessage(chatId, "Usage: `/analyze owner/repo description of the problem`");
+      return;
+    }
+    const r = gh.parseRepo(parts[0]);
+    const description = parts.slice(1).join(" ");
+
+    await sendMessage(chatId, `🔍 Analyzing *${escapeMd(r.owner + "/" + r.repo)}*...\nThis may take 30-60 seconds.`);
+
+    // Gather context: package.json, recent commits, tsconfig
+    const files: { path: string; content: string }[] = [];
+    const toRead = ["package.json", "tsconfig.json", "src/index.ts"];
+    for (const p of toRead) {
+      try {
+        const f = await gh.getFile(r.owner, r.repo, p);
+        files.push({ path: p, content: f.content });
+      } catch { /* skip missing files */ }
+    }
+
+    // Get recent commits for context
+    let errorLog = "";
+    try {
+      const commits = await gh.getCommits(r.owner, r.repo, "main", 5);
+      errorLog = "Recent commits:\n" + commits.map((c: any) =>
+        `- ${c.sha.slice(0, 7)}: ${c.commit.message.split("\n")[0]}`
+      ).join("\n");
+    } catch { /* no commits access */ }
+
+    // Check for failed workflow runs
+    try {
+      const runs = await gh.getWorkflowRuns(r.owner, r.repo, 3);
+      const failed = runs.workflow_runs?.filter((r: any) => r.conclusion === "failure");
+      if (failed?.length) {
+        errorLog += "\n\nFailed CI runs:\n" + failed.map((r: any) =>
+          `- ${r.name} #${r.run_number}: ${r.head_branch} (${r.created_at})`
+        ).join("\n");
+      }
+    } catch { /* no actions access */ }
+
+    if (!files.length && !errorLog) {
+      await sendMessage(chatId, "⚠️ Could not read any files or logs. Check repo access.");
+      return;
+    }
+
+    const diagnosis = await analyzer.analyzeError(errorLog, files, description);
+
+    const report = [
+      `🔬 *Analysis Report*`,
+      ``,
+      `*Severity:* ${escapeMd(diagnosis.severity.toUpperCase())}`,
+      `*Confidence:* ${diagnosis.confidence}%`,
+      ``,
+      `*Diagnosis:* ${escapeMd(diagnosis.diagnosis)}`,
+      ``,
+      `*Root Cause:* ${escapeMd(diagnosis.root_cause)}`,
+      ``,
+      `*Files to Fix:*`,
+      ...diagnosis.files_to_fix.map((f) => `  • ${escapeMd(f.path)}: ${escapeMd(f.reason)}`),
+      ``,
+      `Use /fix ${r.owner}/${r.repo} ${description} to apply a fix.`,
+    ];
+    await sendMessage(chatId, report.join("\n"));
+
+    // Log to audit
+    await supabase.from("audit_log").insert({
+      action: "dev_analyze",
+      details: { repo: `${r.owner}/${r.repo}`, description, diagnosis },
+    });
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ Analysis failed: ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /fix ───────────────────────────────────────────────
+export async function handleFix(chatId: number, args: string) {
+  try {
+    const parts = args.split(/\s+/);
+    if (parts.length < 2) {
+      await sendMessage(chatId, "Usage: `/fix owner/repo description of the problem`");
+      return;
+    }
+    const r = gh.parseRepo(parts[0]);
+    const description = parts.slice(1).join(" ");
+    const repoFullName = `${r.owner}/${r.repo}`;
+
+    await sendMessage(chatId, `🔧 Starting fix for *${escapeMd(repoFullName)}*...\nStep 1/5: Reading files`);
+
+    // Step 1: Read relevant files
+    const keyFiles = ["package.json", "tsconfig.json", "src/index.ts", "src/telegram-handler.ts", "src/supabase.ts"];
+    const files: { path: string; content: string; sha?: string }[] = [];
+    for (const p of keyFiles) {
+      try {
+        const f = await gh.getFile(r.owner, r.repo, p);
+        files.push({ path: p, content: f.content, sha: f.sha });
+      } catch { /* skip */ }
+    }
+
+    if (!files.length) {
+      await sendMessage(chatId, "⚠️ Could not read any files from the repo.");
+      return;
+    }
+
+    await sendMessage(chatId, `Step 2/5: Analyzing with AI...`);
+
+    // Step 2: Diagnose
+    let errorLog = "";
+    try {
+      const runs = await gh.getWorkflowRuns(r.owner, r.repo, 3);
+      const failed = runs.workflow_runs?.filter((r: any) => r.conclusion === "failure");
+      if (failed?.length) {
+        errorLog = "Failed CI: " + failed.map((r: any) => `${r.name} on ${r.head_branch}`).join("; ");
+      }
+    } catch { /* ok */ }
+
+    const diagnosis = await analyzer.analyzeError(errorLog, files, description);
+
+    await sendMessage(chatId, `Step 3/5: Generating fix...\n_Diagnosis: ${escapeMd(diagnosis.diagnosis)}_`);
+
+    // Step 3: Generate fix
+    const fixes = await analyzer.generateFix(diagnosis, files);
+    if (!fixes.length) {
+      await sendMessage(chatId, "⚠️ AI could not generate a fix. Try a more specific description.");
+      return;
+    }
+
+    // Step 4: Review changes
+    await sendMessage(chatId, `Step 4/5: Reviewing changes...`);
+    const originals = fixes.map((fix) => {
+      const orig = files.find((f) => f.path === fix.path);
+      return { path: fix.path, content: orig?.content || "" };
+    });
+    const review = await analyzer.reviewChanges(originals, fixes.map((f) => ({ path: f.path, content: f.content })));
+
+    if (!review.safe) {
+      await sendMessage(chatId, `⚠️ Review found issues:\n${review.issues.map((i) => `• ${escapeMd(i)}`).join("\n")}\n\nFix not applied. Refine your description and try again.`);
+      return;
+    }
+
+    // Step 5: Create branch + commit + PR
+    await sendMessage(chatId, `Step 5/5: Creating branch and PR...`);
+    const branchName = `fix/${Date.now()}-${description.slice(0, 20).replace(/[^a-z0-9]/gi, "-").toLowerCase()}`;
+    await gh.createBranch(r.owner, r.repo, branchName);
+
+    const commitMessages: string[] = [];
+    for (const fix of fixes) {
+      const orig = files.find((f) => f.path === fix.path);
+      await gh.createOrUpdateFile(
+        r.owner, r.repo, fix.path,
+        fix.content,
+        `fix: ${fix.explanation}`,
+        branchName,
+        orig?.sha
+      );
+      commitMessages.push(`• ${fix.path}: ${fix.explanation}`);
+    }
+
+    const prBody = [
+      `## 🔧 Autonomous Fix`,
+      ``,
+      `**Problem:** ${description}`,
+      `**Diagnosis:** ${diagnosis.diagnosis}`,
+      `**Root Cause:** ${diagnosis.root_cause}`,
+      `**Severity:** ${diagnosis.severity}`,
+      `**Confidence:** ${diagnosis.confidence}%`,
+      ``,
+      `### Changes`,
+      ...commitMessages,
+      ``,
+      `---`,
+      `_Generated by XTOP Dev Agent. Review before merging._`,
+    ].join("\n");
+
+    const pr = await gh.createPR(
+      r.owner, r.repo,
+      `fix: ${diagnosis.diagnosis}`,
+      prBody,
+      branchName
+    );
+
+    const report = [
+      `✅ *Fix Applied!*`,
+      ``,
+      `*Branch:* \`${escapeMd(branchName)}\``,
+      `*PR:* ${escapeMd(pr.html_url)}`,
+      ``,
+      `*Changes:*`,
+      ...commitMessages.map((m) => escapeMd(m)),
+      ``,
+      `⚠️ Review the PR before merging.`,
+    ];
+    await sendMessage(chatId, report.join("\n"));
+
+    await supabase.from("audit_log").insert({
+      action: "dev_fix",
+      details: { repo: repoFullName, branch: branchName, pr: pr.number, files: fixes.map((f) => f.path) },
+    });
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ Fix failed: ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /deploy ────────────────────────────────────────────
+export async function handleDeploy(chatId: number, args: string) {
+  try {
+    const target = args.toLowerCase().trim();
+
+    if (target === "render" || !target) {
+      const apiKey = process.env.RENDER_API_KEY;
+      const serviceId = process.env.RENDER_SERVICE_ID || "srv-dbf6gi0ae00c73ev0l9g";
+      if (!apiKey) {
+        await sendMessage(chatId, "❌ RENDER\\_API\\_KEY not set");
+        return;
+      }
+      await sendMessage(chatId, "🚀 Triggering Render deployment...");
+      const res = await fetch(`https://api.render.com/v1/services/${serviceId}/deploys`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      });
+      if (!res.ok) throw new Error(`Render ${res.status}`);
+      const data = await res.json();
+      await sendMessage(chatId, `✅ Deploy triggered!\nID: \`${escapeMd(data.id || "unknown")}\`\nStatus: ${escapeMd(data.status || "created")}`);
+    } else if (target === "netlify") {
+      if (!nf.isConfigured()) {
+        await sendMessage(chatId, "❌ NETLIFY\\_AUTH\\_TOKEN and NETLIFY\\_SITE\\_ID not set");
+        return;
+      }
+      await sendMessage(chatId, "🚀 Triggering Netlify deployment...");
+      const result = await nf.triggerBuild();
+      await sendMessage(chatId, `✅ Netlify deploy triggered via ${escapeMd(result.via)}`);
+    } else {
+      await sendMessage(chatId, "Usage: `/deploy render` or `/deploy netlify`");
+    }
+
+    await supabase.from("audit_log").insert({
+      action: "deploy",
+      details: { target: target || "render" },
+    });
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ Deploy failed: ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /ci ────────────────────────────────────────────────
+export async function handleCI(chatId: number, args: string) {
+  try {
+    const r = args ? gh.parseRepo(args.split(/\s+/)[0]) : gh.DEFAULT_REPO;
+    const runs = await gh.getWorkflowRuns(r.owner, r.repo, 5);
+    if (!runs.workflow_runs?.length) {
+      await sendMessage(chatId, `No workflow runs found for *${escapeMd(r.owner + "/" + r.repo)}*.\nCreate a workflow first.`);
+      return;
+    }
+    const lines = runs.workflow_runs.map((run: any) => {
+      const icon = run.conclusion === "success" ? "✅" : run.conclusion === "failure" ? "❌" : "⏳";
+      return `${icon} ${escapeMd(run.name)} #${run.run_number}\n  ${escapeMd(run.head_branch)} | ${escapeMd(run.conclusion || run.status)} | ${escapeMd(run.created_at?.slice(0, 16) || "?")}`;
+    });
+    await sendMessage(chatId, `🔄 *CI Status: ${escapeMd(r.owner + "/" + r.repo)}*\n\n${lines.join("\n\n")}`);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── /devstatus ─────────────────────────────────────────
+export async function handleDevStatus(chatId: number) {
+  try {
+    const { data: logs } = await supabase
+      .from("audit_log")
+      .select("action, details, created_at")
+      .in("action", ["dev_analyze", "dev_fix", "deploy"])
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (!logs?.length) {
+      await sendMessage(chatId, "No dev activity yet. Use /analyze or /fix to start.");
+      return;
+    }
+
+    const lines = logs.map((l: any) => {
+      const icon = l.action === "dev_fix" ? "🔧" : l.action === "deploy" ? "🚀" : "🔍";
+      const repo = l.details?.repo || l.details?.target || "?";
+      return `${icon} ${escapeMd(l.action)} → ${escapeMd(repo)}\n  ${escapeMd(l.created_at?.slice(0, 16) || "?")}`;
+    });
+    await sendMessage(chatId, `📊 *Dev Activity*\n\n${lines.join("\n\n")}`);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
+// ── Router ─────────────────────────────────────────────
+export async function handleDevCommand(chatId: number, cmd: string, args: string, fullText: string) {
+  switch (cmd) {
+    case "/repos": return handleRepos(chatId);
+    case "/browse": return handleBrowse(chatId, args);
+    case "/readfile": return handleReadFile(chatId, args);
+    case "/analyze": return handleAnalyze(chatId, args);
+    case "/fix": return handleFix(chatId, args);
+    case "/deploy": return handleDeploy(chatId, args);
+    case "/ci": return handleCI(chatId, args);
+    case "/devstatus": return handleDevStatus(chatId);
+    default:
+      await sendMessage(chatId, "Unknown dev command.");
+  }
+}

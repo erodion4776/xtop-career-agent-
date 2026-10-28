@@ -1,11 +1,11 @@
-import { sendMessage, editMessageText, answerCallbackQuery } from './telegram';
-import { editMenu, btn, buildKeyboard, paginationRow } from './ui-engine';
-import { GitHubClient } from './github-client';
-import { NetlifyClient } from './netlify-client';
-import { RenderClient } from './render-client';
-import { analyzeIssue, generateFix } from './code-analyzer';
-import { getSupabaseClient } from './supabase';
-import * as siteBuilder from './site-builder';
+import { sendMessage, editMessageText, answerCallbackQuery } from './telegram.js';
+import { editMenu, btn, buildKeyboard, paginationRow } from './ui-engine.js';
+import { GitHubClient } from './github-client.js';
+import { NetlifyClient } from './netlify-client.js';
+import { RenderClient } from './render-client.js';
+import { analyzeIssue, generateFix } from './code-analyzer.js';
+import { getSupabaseClient } from './supabase.js';
+import * as siteBuilder from './site-builder.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -36,12 +36,9 @@ function truncate(s: string, max = 3800): string {
   return s.slice(0, max) + '\n\n… *(truncated)*';
 }
 
-// Telegram callback_data limit is 64 bytes.
-// We use a short encoding for deep paths when needed.
 function safeData(prefix: string, ...parts: string[]): string {
   const raw = [prefix, ...parts].join(':');
   if (raw.length <= 64) return raw;
-  // Fallback: truncate the last part
   const head = [prefix, ...parts.slice(0, -1)].join(':') + ':';
   const avail = 64 - head.length;
   if (avail < 4) return prefix + ':err';
@@ -293,7 +290,6 @@ async function handleGitHubRepos(chatId: number, msgId: number, args: string) {
 // ─── GitHub Repo Action Menu ────────────────────────────────────────
 
 async function handleGitHubAction(chatId: number, msgId: number, args: string) {
-  // args = "owner/repo:action" or "owner/repo:menu"
   const parts = args.split(':');
   if (parts.length < 2) {
     await editMenu(chatId, msgId, '❌ Invalid repo action.', [[btn('⬅️ Back', 'gr:0')]]);
@@ -302,7 +298,6 @@ async function handleGitHubAction(chatId: number, msgId: number, args: string) {
 
   const repoFullName = parts[0];
   const action = parts.slice(1).join(':');
-  const [owner, repo] = repoFullName.split('/');
 
   if (action === 'menu') {
     await editMenu(chatId, msgId, `📁 *${repoFullName}*`, [
@@ -341,26 +336,21 @@ async function handleGitHubBrowse(chatId: number, msgId: number, args: string) {
     return;
   }
 
-  // args = "owner/repo:path"
-  const slashIdx = args.indexOf('/');
-  const secondSlash = args.indexOf('/', slashIdx + 1);
+  const colonIdx = args.indexOf(':');
   let repoFullName: string, path: string;
 
-  if (secondSlash > 0) {
-    // Could be owner/repo/some/path — find the colon separator
-    const colonIdx = args.indexOf(':');
-    if (colonIdx > 0) {
-      repoFullName = args.slice(0, colonIdx);
-      path = args.slice(colonIdx + 1);
-    } else {
-      // Fallback: assume owner/repo is first two segments
-      const segs = args.split('/');
-      repoFullName = segs.slice(0, 2).join('/');
-      path = '/' + segs.slice(2).join('/');
-    }
+  if (colonIdx > 0) {
+    repoFullName = args.slice(0, colonIdx);
+    path = args.slice(colonIdx + 1);
   } else {
-    repoFullName = args;
-    path = '/';
+    const segs = args.split('/');
+    if (segs.length >= 2) {
+      repoFullName = segs.slice(0, 2).join('/');
+      path = segs.length > 2 ? '/' + segs.slice(2).join('/') : '/';
+    } else {
+      repoFullName = args;
+      path = '/';
+    }
   }
 
   const [owner, repo] = repoFullName.split('/');
@@ -377,7 +367,6 @@ async function handleGitHubBrowse(chatId: number, msgId: number, args: string) {
       return;
     }
 
-    // Sort: dirs first, then files
     items.sort((a: any, b: any) => {
       if (a.type === 'dir' && b.type !== 'dir') return -1;
       if (a.type !== 'dir' && b.type === 'dir') return 1;
@@ -385,7 +374,7 @@ async function handleGitHubBrowse(chatId: number, msgId: number, args: string) {
     });
 
     const rows: any[][] = [];
-    const display = items.slice(0, 8); // limit buttons
+    const display = items.slice(0, 8);
 
     for (const item of display) {
       const itemPath = cleanPath ? `${cleanPath}/${item.name}` : item.name;
@@ -396,7 +385,6 @@ async function handleGitHubBrowse(chatId: number, msgId: number, args: string) {
       }
     }
 
-    // Parent directory button
     if (cleanPath) {
       const parent = cleanPath.includes('/')
         ? cleanPath.slice(0, cleanPath.lastIndexOf('/'))
@@ -568,11 +556,7 @@ async function handleNetlifyList(chatId: number, msgId: number, args: string) {
     }
 
     const rows: any[][] = sites.map((s: any) => {
-      const name = s.name || s.id;
-      const url = s.ssl_url || s.url || '';
-      return [
-        btn(`🌐 ${name}`, safeData('nd', s.id)),
-      ];
+      return [btn(`🌐 ${s.name || s.id}`, safeData('nd', s.id))];
     });
 
     if (totalPages > 1) {
@@ -673,7 +657,6 @@ async function handleCRMAction(chatId: number, msgId: number, args: string, cbId
   try {
     await sb.from('prospects').update({ status: newStatus }).eq('id', prospectId);
     await answerCallbackQuery(cbId, `✅ Status → ${newStatus}`).catch(() => {});
-    // Refresh list
     await handleCRMList(chatId, msgId, '0');
   } catch (err: any) {
     await answerCallbackQuery(cbId, `❌ ${err.message}`).catch(() => {});
@@ -783,7 +766,6 @@ async function handleWatchCI(chatId: number, msgId: number, args: string, cbId: 
   try {
     await editMenu(chatId, msgId, `👁 *Checking CI for ${repoFullName}…*`, []);
 
-    // Check GitHub Actions workflow runs
     const token = process.env.GITHUB_TOKEN;
     const res = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=3`,

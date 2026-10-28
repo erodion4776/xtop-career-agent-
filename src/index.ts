@@ -99,4 +99,22 @@ async function setupWebhook() {
     const webhookUrl = `${url}/telegram/webhook`;
     const body: Record<string, any> = { url: webhookUrl };
     if (process.env.TELEGRAM_WEBHOOK_SECRET) {
-      body.secret_token = 
+      body.secret_token = process.env.TELEGRAM_WEBHOOK_SECRET;
+    }
+    const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    console.log("Webhook:", data.ok ? "✅ Set" : "❌ Failed", data.description || "");
+  } catch (e) {
+    console.error("Webhook setup error:", e);
+  }
+}
+
+// ── Start server ───────────────────────────────────────
+app.listen(PORT, () => {
+  console.log(`🟢 XTOP Agent running on port ${PORT}`);
+  setupWebhook();
+});

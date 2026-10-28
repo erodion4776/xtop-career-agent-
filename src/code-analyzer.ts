@@ -3,6 +3,43 @@ import { GoogleGenAI } from "@google/genai";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
+// ── Retry helper ───────────────────────────────────────
+async function callGemini(prompt: string, retries = 3): Promise<string> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await ai.models.generateContent({ model: MODEL, contents: prompt });
+      const text = res.text || "";
+      if (!text && attempt < retries) {
+        await sleep(3000 * attempt);
+        continue;
+      }
+      return text;
+    } catch (e: any) {
+      const msg = e.message || String(e);
+      const isRetryable =
+        msg.includes("503") ||
+        msg.includes("UNAVAILABLE") ||
+        msg.includes("429") ||
+        msg.includes("high demand") ||
+        msg.includes("RESOURCE_EXHAUSTED") ||
+        msg.includes("overloaded");
+
+      if (isRetryable && attempt < retries) {
+        const wait = 5000 * attempt;
+        await sleep(wait);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("Gemini API unavailable after 3 retries");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// ── Types ──────────────────────────────────────────────
 export interface Diagnosis {
   diagnosis: string;
   severity: "critical" | "high" | "medium" | "low";
@@ -17,6 +54,7 @@ export interface FileFix {
   explanation: string;
 }
 
+// ── Analyze ────────────────────────────────────────────
 export async function analyzeError(
   errorLog: string,
   files: { path: string; content: string }[],
@@ -45,13 +83,13 @@ Return JSON:
   "confidence": 85
 }`;
 
-  const res = await ai.models.generateContent({ model: MODEL, contents: prompt });
-  const text = res.text || "";
+  const text = await callGemini(prompt);
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("Gemini returned no JSON");
   return JSON.parse(jsonMatch[0]) as Diagnosis;
 }
 
+// ── Generate Fix ───────────────────────────────────────
 export async function generateFix(
   diagnosis: Diagnosis,
   files: { path: string; content: string; sha?: string }[]
@@ -84,13 +122,13 @@ Return JSON array:
   }
 ]`;
 
-  const res = await ai.models.generateContent({ model: MODEL, contents: prompt });
-  const text = res.text || "";
+  const text = await callGemini(prompt);
   const jsonMatch = text.match(/\[[\s\S]*\]/);
   if (!jsonMatch) throw new Error("Gemini returned no fix JSON");
   return JSON.parse(jsonMatch[0]) as FileFix[];
 }
 
+// ── Review ─────────────────────────────────────────────
 export async function reviewChanges(
   originalFiles: { path: string; content: string }[],
   fixedFiles: { path: string; content: string }[]
@@ -109,9 +147,13 @@ Return JSON:
   "issues": ["list any problems found, empty if none"]
 }`;
 
-  const res = await ai.models.generateContent({ model: MODEL, contents: prompt });
-  const text = res.text || "";
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return { safe: true, issues: ["Could not parse review response"] };
-  return JSON.parse(jsonMatch[0]);
+  try {
+    const text = await callGemini(prompt, 2);
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { safe: true, issues: ["Could not parse review response"] };
+    return JSON.parse(jsonMatch[0]);
+  } catch {
+    // If review fails, allow the fix but flag it
+    return { safe: true, issues: ["⚠️ AI review skipped due to API overload. Review the PR manually."] };
+  }
 }

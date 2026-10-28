@@ -135,26 +135,15 @@ export async function getPendingTasks(): Promise<TaskRecord[]> {
     .from("tasks")
     .select("*")
     .eq("status", "pending")
-    .lte("retry_count", supabase.rpc("noop"))
     .order("created_at", { ascending: true })
     .limit(5);
 
-  if (error) {
-    // Fallback without the retry check
-    const { data: fallback, error: fbErr } = await supabase
-      .from("tasks")
-      .select("*")
-      .eq("status", "pending")
-      .order("created_at", { ascending: true })
-      .limit(5);
+  if (error) throw error;
 
-    if (fbErr) throw fbErr;
-    return ((fallback ?? []) as TaskRecord[]).filter(
-      (t) => t.retry_count <= t.max_retries
-    );
-  }
-
-  return (data ?? []) as TaskRecord[];
+  // Filter in application code to avoid RPC dependency
+  return ((data ?? []) as TaskRecord[]).filter(
+    (t) => t.retry_count <= t.max_retries
+  );
 }
 
 export async function retryTask(

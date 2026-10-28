@@ -134,6 +134,9 @@ async function routeCommand(
         "/prospects — List or search prospects",
         "/find \\<keyword\\> — Search prospects",
         "",
+        "You can also type a prospect directly:",
+        "Business Name / email / phone",
+        "",
         "More features coming in future stages.",
       ].join("\n"),
       { parseMode: "Markdown" }
@@ -562,12 +565,22 @@ async function routeCommand(
   // it has a business name before it, treat it as a prospect.
   if (hasEmail || hasPhone) {
     // Split on common separators: / | ,
-    const parts = text.split(/[/|,]/).map((s) => s.trim()).filter(Boolean);
+    const parts = text
+      .split(/[/|,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     if (parts.length >= 1) {
-      const businessName = parts[0].replace(emailPattern, "").replace(phonePattern, "").trim();
-      const email = parts.find((p) => emailPattern.test(p))?.match(emailPattern)?.[0];
-      const phone = parts.find((p) => phonePattern.test(p))?.match(phonePattern)?.[0];
+      const businessName = parts[0]
+        .replace(emailPattern, "")
+        .replace(phonePattern, "")
+        .trim();
+      const email = parts
+        .find((p) => emailPattern.test(p))
+        ?.match(emailPattern)?.[0];
+      const phone = parts
+        .find((p) => phonePattern.test(p))
+        ?.match(phonePattern)?.[0];
 
       if (businessName.length >= 2) {
         try {
@@ -625,3 +638,33 @@ async function routeCommand(
   await logAction("unrecognised_command", {
     text: text.slice(0, 200),
   });
+}
+
+async function handleCallback(
+  callback: Record<string, unknown>
+): Promise<void> {
+  const from = callback.from as
+    | Record<string, unknown>
+    | undefined;
+  const data = callback.data as string | undefined;
+  const queryId = callback.id as string;
+
+  if (!from || !queryId) return;
+
+  const userId = from.id as number;
+
+  if (!isOwner(userId)) {
+    await answerCallback(queryId, "Unauthorised.");
+    return;
+  }
+
+  if (!data) {
+    await answerCallback(queryId, "No action data.");
+    return;
+  }
+
+  await answerCallback(
+    queryId,
+    `Action "${data}" received. Button handlers coming in Stage 2.`
+  );
+}

@@ -16,6 +16,7 @@ import {
   getCrmStats,
   searchProspects,
 } from "./crm.js";
+import { supabase } from "./supabase.js";
 import {
   generateDraft,
   listDrafts,

@@ -29,6 +29,15 @@ function isDuplicate(updateId: number): boolean {
   return false;
 }
 
+/**
+ * Escape Telegram Markdown v1 special characters in
+ * dynamic content so underscores, asterisks, etc. in
+ * task names and error messages don't break parsing.
+ */
+function escapeMd(text: string): string {
+  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+}
+
 export async function handleUpdate(
   update: Record<string, unknown>
 ): Promise<void> {
@@ -139,10 +148,10 @@ async function routeCommand(
           [
             "✅ *System Status*",
             "",
-            `Server: ${r.server || "online"}`,
-            `Database: ${r.database || "connected"}`,
+            `Server: ${escapeMd(String(r.server || "online"))}`,
+            `Database: ${escapeMd(String(r.database || "connected"))}`,
             `Saved jobs: ${r.jobCount ?? "?"}`,
-            `Time: ${r.timestamp || new Date().toISOString()}`,
+            `Time: ${escapeMd(String(r.timestamp || new Date().toISOString()))}`,
           ].join("\n"),
           { parseMode: "Markdown" }
         );
@@ -153,9 +162,10 @@ async function routeCommand(
         );
       }
     } catch (error) {
+      const msg = error instanceof Error ? error.message : "unknown error";
       await sendMessage(
         chatId,
-        `❌ Health check failed: ${error instanceof Error ? error.message : "unknown error"}`
+        `❌ Health check failed: ${escapeMd(msg)}`
       );
     }
     return;
@@ -182,7 +192,7 @@ async function routeCommand(
                   ? "⏳"
                   : "📌";
         const time = new Date(t.created_at).toLocaleString();
-        return `${icon} ${t.task_type} — ${t.status}\n   ${time}`;
+        return `${icon} ${escapeMd(t.task_type)} — ${escapeMd(t.status)}\n   ${escapeMd(time)}`;
       });
 
       await sendMessage(
@@ -191,9 +201,10 @@ async function routeCommand(
         { parseMode: "Markdown" }
       );
     } catch (error) {
+      const msg = error instanceof Error ? error.message : "unknown";
       await sendMessage(
         chatId,
-        `❌ Could not load tasks: ${error instanceof Error ? error.message : "unknown"}`
+        `❌ Could not load tasks: ${escapeMd(msg)}`
       );
     }
     return;
@@ -234,7 +245,7 @@ async function routeCommand(
       } else if (result?.status === "failed") {
         await sendMessage(
           chatId,
-          `❌ Discovery failed: ${result.error || "unknown error"}`
+          `❌ Discovery failed: ${escapeMd(result.error || "unknown error")}`
         );
       } else {
         await sendMessage(
@@ -243,9 +254,10 @@ async function routeCommand(
         );
       }
     } catch (error) {
+      const msg = error instanceof Error ? error.message : "unknown";
       await sendMessage(
         chatId,
-        `❌ Discovery error: ${error instanceof Error ? error.message : "unknown"}`
+        `❌ Discovery error: ${escapeMd(msg)}`
       );
     }
     return;
@@ -275,7 +287,7 @@ async function routeCommand(
 
         const lines = taskList.map(
           (t) =>
-            `${t.status === "completed" ? "✅" : "⏳"} ${t.type} (${t.status})`
+            `${t.status === "completed" ? "✅" : "⏳"} ${escapeMd(String(t.type))} (${escapeMd(String(t.status))})`
         );
 
         await sendMessage(
@@ -290,9 +302,10 @@ async function routeCommand(
         );
       }
     } catch (error) {
+      const msg = error instanceof Error ? error.message : "unknown";
       await sendMessage(
         chatId,
-        `❌ Report error: ${error instanceof Error ? error.message : "unknown"}`
+        `❌ Report error: ${escapeMd(msg)}`
       );
     }
     return;
@@ -302,8 +315,8 @@ async function routeCommand(
   await sendMessage(
     chatId,
     [
-      `📝 I received your message:`,
-      `"${text.slice(0, 200)}"`,
+      "📝 I received your message:",
+      `"${escapeMd(text.slice(0, 200))}"`,
       "",
       "Natural language task processing will improve in future stages.",
       "For now, use /help to see available commands.",

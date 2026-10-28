@@ -547,7 +547,6 @@ async function routeCommand(
     return;
   }
 
-  // ── NATURAL LANGUAGE FALLBACK ─────────────────
   // ── NATURAL LANGUAGE: AUTO-DETECT PROSPECTS ───
 
   // Detect patterns like:
@@ -625,4 +624,4 @@ async function routeCommand(
 
   await logAction("unrecognised_command", {
     text: text.slice(0, 200),
-  }
+  });

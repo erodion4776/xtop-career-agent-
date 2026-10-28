@@ -10,9 +10,9 @@ async function getSupabase() {
 
 async function getGitHubClient(): Promise<any> {
   try {
-    const mod = await import('./github-client.js');
+    const mod: any = await import('./github-client.js');
     for (const key of Object.keys(mod)) {
-      const val = (mod as any)[key];
+      const val = mod[key];
       if (typeof val === 'function') {
         try {
           const inst = new val();
@@ -25,13 +25,13 @@ async function getGitHubClient(): Promise<any> {
         }
       }
       if (typeof val === 'object' && val !== null) {
-        if ((val as any).listRepos || (val as any).getRepos) return val;
+        if (val.listRepos || val.getRepos) return val;
       }
     }
     if (mod.default) {
       if (typeof mod.default === 'function') {
-        try { return new (mod.default as any)(); } catch {
-          try { return (mod.default as any)(); } catch { /* skip */ }
+        try { return new mod.default(); } catch {
+          try { return mod.default(); } catch { /* skip */ }
         }
       }
       if (typeof mod.default === 'object') return mod.default;
@@ -43,34 +43,34 @@ async function getGitHubClient(): Promise<any> {
   const h = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' };
 
   return {
-    isConfigured: () => true,
-    async listRepos(page = 0, perPage = 10) {
-      const r = await fetch('https://api.github.com/user/repos?per_page=' + perPage + '&page=' + (page + 1) + '&sort=updated', { headers: h });
+    isConfigured: function() { return true; },
+    listRepos: async function(page: number, perPage: number) {
+      var r = await fetch('https://api.github.com/user/repos?per_page=' + perPage + '&page=' + (page + 1) + '&sort=updated', { headers: h });
       if (!r.ok) throw new Error('GitHub API ' + r.status);
       return { repos: await r.json(), totalPages: 10 };
     },
-    async listContents(owner: string, repo: string, path: string) {
-      const r = await fetch('https://api.github.com/repos/' + owner + '/' + repo + '/contents/' + path, { headers: h });
+    listContents: async function(owner: string, repo: string, path: string) {
+      var r = await fetch('https://api.github.com/repos/' + owner + '/' + repo + '/contents/' + path, { headers: h });
       if (!r.ok) throw new Error('GitHub API ' + r.status);
       return await r.json();
     },
-    async getFileContent(owner: string, repo: string, path: string) {
-      const r = await fetch('https://api.github.com/repos/' + owner + '/' + repo + '/contents/' + path, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github.raw+json' } });
+    getFileContent: async function(owner: string, repo: string, path: string) {
+      var r = await fetch('https://api.github.com/repos/' + owner + '/' + repo + '/contents/' + path, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github.raw+json' } });
       if (!r.ok) throw new Error('GitHub API ' + r.status);
       return await r.text();
     },
-    async listIssues(owner: string, repo: string, page = 0) {
-      const r = await fetch('https://api.github.com/repos/' + owner + '/' + repo + '/issues?state=open&per_page=5&page=' + (page + 1), { headers: h });
+    listIssues: async function(owner: string, repo: string, page: number) {
+      var r = await fetch('https://api.github.com/repos/' + owner + '/' + repo + '/issues?state=open&per_page=5&page=' + (page + 1), { headers: h });
       if (!r.ok) throw new Error('GitHub API ' + r.status);
       return await r.json();
     },
-    async listCommits(owner: string, repo: string, page = 0) {
-      const r = await fetch('https://api.github.com/repos/' + owner + '/' + repo + '/commits?per_page=5&page=' + (page + 1), { headers: h });
+    listCommits: async function(owner: string, repo: string, page: number) {
+      var r = await fetch('https://api.github.com/repos/' + owner + '/' + repo + '/commits?per_page=5&page=' + (page + 1), { headers: h });
       if (!r.ok) throw new Error('GitHub API ' + r.status);
       return await r.json();
     },
-    async listPRs(owner: string, repo: string, page = 0) {
-      const r = await fetch('https://api.github.com/repos/' + owner + '/' + repo + '/pulls?state=open&per_page=5&page=' + (page + 1), { headers: h });
+    listPRs: async function(owner: string, repo: string, page: number) {
+      var r = await fetch('https://api.github.com/repos/' + owner + '/' + repo + '/pulls?state=open&per_page=5&page=' + (page + 1), { headers: h });
       if (!r.ok) throw new Error('GitHub API ' + r.status);
       return await r.json();
     },
@@ -79,9 +79,9 @@ async function getGitHubClient(): Promise<any> {
 
 async function getNetlifyClient(): Promise<any> {
   try {
-    const mod = await import('./netlify-client.js');
+    const mod: any = await import('./netlify-client.js');
     for (const key of Object.keys(mod)) {
-      const val = (mod as any)[key];
+      const val = mod[key];
       if (typeof val === 'function') {
         try {
           const inst = new val();
@@ -94,13 +94,13 @@ async function getNetlifyClient(): Promise<any> {
         }
       }
       if (typeof val === 'object' && val !== null) {
-        if ((val as any).listSites || (val as any).getSites) return val;
+        if (val.listSites || val.getSites) return val;
       }
     }
     if (mod.default) {
       if (typeof mod.default === 'function') {
-        try { return new (mod.default as any)(); } catch {
-          try { return (mod.default as any)(); } catch { /* skip */ }
+        try { return new mod.default(); } catch {
+          try { return mod.default(); } catch { /* skip */ }
         }
       }
       if (typeof mod.default === 'object') return mod.default;
@@ -112,14 +112,14 @@ async function getNetlifyClient(): Promise<any> {
   const h = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
 
   return {
-    isConfigured: () => true,
-    async listSites(page = 0, perPage = 10) {
-      const r = await fetch('https://api.netlify.com/api/v1/sites?per_page=' + perPage + '&page=' + (page + 1), { headers: h });
+    isConfigured: function() { return true; },
+    listSites: async function(page: number, perPage: number) {
+      var r = await fetch('https://api.netlify.com/api/v1/sites?per_page=' + perPage + '&page=' + (page + 1), { headers: h });
       if (!r.ok) throw new Error('Netlify API ' + r.status);
       return { sites: await r.json(), totalPages: 10 };
     },
-    async triggerDeploy(siteId: string) {
-      const r = await fetch('https://api.netlify.com/api/v1/sites/' + siteId + '/deploys', { method: 'POST', headers: h });
+    triggerDeploy: async function(siteId: string) {
+      var r = await fetch('https://api.netlify.com/api/v1/sites/' + siteId + '/deploys', { method: 'POST', headers: h });
       if (!r.ok) throw new Error('Netlify API ' + r.status);
       return await r.json();
     },
@@ -136,21 +136,22 @@ async function setSession(chatId: number, userId: number, workflow: string, stat
   } catch (e) { console.error('setSession failed:', e); }
 }
 
-function truncate(s: string, max = 3800): string {
-  return s.length <= max ? s : s.slice(0, max) + '\n\n... (truncated)';
+function truncate(s: string, max: number): string {
+  if (!max) max = 3800;
+  return s.length <= max ? s : s.slice(0, max) + '\n... (truncated)';
 }
 
-function safeData(prefix: string, ...parts: string[]): string {
-  const raw = [prefix].concat(parts).join(':');
+function safeData(prefix: string, a: string, b: string): string {
+  var raw = prefix + ':' + a + ':' + b;
   if (raw.length <= 64) return raw;
-  const head = [prefix].concat(parts.slice(0, -1)).join(':') + ':';
-  const avail = 64 - head.length;
+  var head = prefix + ':' + a + ':';
+  var avail = 64 - head.length;
   if (avail < 4) return prefix + ':err';
-  return head + parts[parts.length - 1].slice(-avail);
+  return head + b.slice(-avail);
 }
 
 function paginationRow(prefix: string, page: number, total: number): any[] {
-  const row: any[] = [];
+  var row: any[] = [];
   if (page > 0) row.push(btn('<', prefix + ':' + (page - 1)));
   row.push(btn((page + 1) + '/' + total, 'm:noop'));
   if (page < total - 1) row.push(btn('>', prefix + ':' + (page + 1)));
@@ -158,19 +159,19 @@ function paginationRow(prefix: string, page: number, total: number): any[] {
 }
 
 export async function handleCallback(update: any): Promise<void> {
-  const cb = update.callback_query;
+  var cb = update.callback_query;
   if (!cb) return;
-  const chatId: number = cb.message.chat.id;
-  const msgId: number = cb.message.message_id;
-  const data: string = cb.data || '';
-  const cbId: string = cb.id;
-  const userId: number = cb.from ? cb.from.id : chatId;
+  var chatId: number = cb.message.chat.id;
+  var msgId: number = cb.message.message_id;
+  var data: string = cb.data || '';
+  var cbId: string = cb.id;
+  var userId: number = cb.from ? cb.from.id : chatId;
   await answerCallbackQuery(cbId, '...').catch(function() {});
 
   try {
-    const ci = data.indexOf(':');
-    const prefix = ci > 0 ? data.slice(0, ci) : data;
-    const args = ci > 0 ? data.slice(ci + 1) : '';
+    var ci = data.indexOf(':');
+    var prefix = ci > 0 ? data.slice(0, ci) : data;
+    var args = ci > 0 ? data.slice(ci + 1) : '';
 
     if (prefix === 'm') await handleMenu(chatId, msgId, args);
     else if (prefix === 'gr') await handleGitHubRepos(chatId, msgId, args);
@@ -234,14 +235,12 @@ async function handleMenu(chatId: number, msgId: number, target: string) {
     ]);
   } else if (target === 'tasks') {
     try {
-      const sb = await getSupabase();
-      const res = await sb.from('tasks').select('id, type, status, created_at').order('created_at', { ascending: false }).limit(10);
-      const list = (res.data as any[]) || [];
-      const text = list.length === 0 ? 'No tasks yet.' : 'Recent Tasks\n\n' + list.map(function(t: any) {
-        return t.type + ' - ' + t.status;
-      }).join('\n');
+      var sb = await getSupabase();
+      var res = await sb.from('tasks').select('id, type, status, created_at').order('created_at', { ascending: false }).limit(10);
+      var list = (res.data as any[]) || [];
+      var text = list.length === 0 ? 'No tasks yet.' : 'Recent Tasks\n\n' + list.map(function(t: any) { return t.type + ' - ' + t.status; }).join('\n');
       await editMenu(chatId, msgId, text, [[btn('Back', 'm:main')]]);
-    } catch {
+    } catch (e) {
       await editMenu(chatId, msgId, 'Tasks - could not load.', [[btn('Back', 'm:main')]]);
     }
   } else if (target === 'status') {
@@ -268,10 +267,10 @@ async function handleMenu(chatId: number, msgId: number, target: string) {
     await editMenu(chatId, msgId, 'Render: ' + (rOk ? 'Connected' : 'Not configured'), [[btn('Deploy', 'dp:render'), btn('Back', 'm:infra')]]);
   } else if (target === 'db_status') {
     try {
-      const sb = await getSupabase();
-      const res = await sb.from('tasks').select('id').limit(1);
-      await editMenu(chatId, msgId, 'Supabase: ' + (res.error ? 'Error' : 'Connected'), [[btn('Back', 'm:infra')]]);
-    } catch (e: any) {
+      var sb2 = await getSupabase();
+      var res2 = await sb2.from('tasks').select('id').limit(1);
+      await editMenu(chatId, msgId, 'Supabase: ' + (res2.error ? 'Error' : 'Connected'), [[btn('Back', 'm:infra')]]);
+    } catch (e) {
       await editMenu(chatId, msgId, 'Supabase: Error', [[btn('Back', 'm:infra')]]);
     }
   } else if (target === 'noop') {
@@ -324,7 +323,7 @@ async function handleGitHubAction(chatId: number, msgId: number, args: string) {
       [btn('Files', safeData('gb', repoFullName, '/')), btn('Issues', safeData('gi', repoFullName, '0'))],
       [btn('PRs', safeData('gp', repoFullName, '0')), btn('Commits', safeData('gc', repoFullName, '0'))],
       [btn('Analyze', safeData('ga', repoFullName, 'analyze')), btn('Fix', safeData('ga', repoFullName, 'fix'))],
-      [btn('Watch CI', safeData('wt', repoFullName))],
+      [btn('Watch CI', safeData('wt', repoFullName, 'x'))],
       [btn('Repos', 'gr:0')],
     ]);
   } else if (action === 'analyze') {
@@ -336,7 +335,7 @@ async function handleGitHubAction(chatId: number, msgId: number, args: string) {
 
 async function handleGitHubBrowse(chatId: number, msgId: number, args: string) {
   var gh: any;
-  try { gh = await getGitHubClient(); } catch {
+  try { gh = await getGitHubClient(); } catch (e) {
     await editMenu(chatId, msgId, 'GitHub not configured.', [[btn('Back', 'm:dev')]]);
     return;
   }
@@ -351,9 +350,9 @@ async function handleGitHubBrowse(chatId: number, msgId: number, args: string) {
     repoFullName = segs.slice(0, 2).join('/');
     path = segs.length > 2 ? '/' + segs.slice(2).join('/') : '/';
   }
-  var parts = repoFullName.split('/');
-  var owner = parts[0];
-  var repo = parts[1];
+  var sp = repoFullName.split('/');
+  var owner = sp[0];
+  var repo = sp[1];
   var cleanPath = path === '/' ? '' : path.replace(/^\//, '');
   try {
     var contents = await gh.listContents(owner, repo, cleanPath);
@@ -394,9 +393,9 @@ async function handleGitHubFile(chatId: number, msgId: number, args: string) {
   var ci = args.indexOf(':');
   var repoFullName = ci > 0 ? args.slice(0, ci) : args;
   var path = ci > 0 ? args.slice(ci + 1) : '';
-  var parts = repoFullName.split('/');
+  var sp = repoFullName.split('/');
   try {
-    var content = await gh.getFileContent(parts[0], parts[1], path);
+    var content = await gh.getFileContent(sp[0], sp[1], path);
     await editMenu(chatId, msgId, path + '\n\n' + truncate(content, 3500), [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
   } catch (err: any) {
     await editMenu(chatId, msgId, 'Error: ' + err.message, [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
@@ -406,19 +405,17 @@ async function handleGitHubFile(chatId: number, msgId: number, args: string) {
 async function handleGitHubIssues(chatId: number, msgId: number, args: string) {
   var ci = args.lastIndexOf(':');
   var repoFullName = ci > 0 ? args.slice(0, ci) : args;
-  var parts = repoFullName.split('/');
+  var sp = repoFullName.split('/');
   var gh = await getGitHubClient();
   try {
-    var issues = await gh.listIssues(parts[0], parts[1], 0);
+    var issues = await gh.listIssues(sp[0], sp[1], 0);
     var list: any[] = issues || [];
     if (list.length === 0) {
       await editMenu(chatId, msgId, repoFullName + ' - No open issues.', [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
       return;
     }
-    var text = repoFullName + ' Issues\n\n' + list.slice(0, 5).map(function(i: any) {
-      return '#' + i.number + ' ' + i.title;
-    }).join('\n');
-    await editMenu(chatId, msgId, truncate(text), [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
+    var text = repoFullName + ' Issues\n\n' + list.slice(0, 5).map(function(i: any) { return '#' + i.number + ' ' + i.title; }).join('\n');
+    await editMenu(chatId, msgId, truncate(text, 3800), [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
   } catch (err: any) {
     await editMenu(chatId, msgId, 'Error: ' + err.message, [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
   }
@@ -427,10 +424,10 @@ async function handleGitHubIssues(chatId: number, msgId: number, args: string) {
 async function handleGitHubCommits(chatId: number, msgId: number, args: string) {
   var ci = args.lastIndexOf(':');
   var repoFullName = ci > 0 ? args.slice(0, ci) : args;
-  var parts = repoFullName.split('/');
+  var sp = repoFullName.split('/');
   var gh = await getGitHubClient();
   try {
-    var commits = await gh.listCommits(parts[0], parts[1], 0);
+    var commits = await gh.listCommits(sp[0], sp[1], 0);
     var list: any[] = commits || [];
     if (list.length === 0) {
       await editMenu(chatId, msgId, repoFullName + ' - No commits.', [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
@@ -440,7 +437,7 @@ async function handleGitHubCommits(chatId: number, msgId: number, args: string) 
       var msg = c.commit && c.commit.message ? c.commit.message.split('\n')[0] : 'no message';
       return (c.sha || '').slice(0, 7) + ' ' + msg;
     }).join('\n');
-    await editMenu(chatId, msgId, truncate(text), [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
+    await editMenu(chatId, msgId, truncate(text, 3800), [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
   } catch (err: any) {
     await editMenu(chatId, msgId, 'Error: ' + err.message, [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
   }
@@ -449,19 +446,17 @@ async function handleGitHubCommits(chatId: number, msgId: number, args: string) 
 async function handleGitHubPRs(chatId: number, msgId: number, args: string) {
   var ci = args.lastIndexOf(':');
   var repoFullName = ci > 0 ? args.slice(0, ci) : args;
-  var parts = repoFullName.split('/');
+  var sp = repoFullName.split('/');
   var gh = await getGitHubClient();
   try {
-    var prs = await gh.listPRs(parts[0], parts[1], 0);
+    var prs = await gh.listPRs(sp[0], sp[1], 0);
     var list: any[] = prs || [];
     if (list.length === 0) {
       await editMenu(chatId, msgId, repoFullName + ' - No open PRs.', [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
       return;
     }
-    var text = repoFullName + ' PRs\n\n' + list.slice(0, 5).map(function(p: any) {
-      return '#' + p.number + ' ' + p.title;
-    }).join('\n');
-    await editMenu(chatId, msgId, truncate(text), [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
+    var text = repoFullName + ' PRs\n\n' + list.slice(0, 5).map(function(p: any) { return '#' + p.number + ' ' + p.title; }).join('\n');
+    await editMenu(chatId, msgId, truncate(text, 3800), [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
   } catch (err: any) {
     await editMenu(chatId, msgId, 'Error: ' + err.message, [[btn('Back', safeData('ga', repoFullName, 'menu'))]]);
   }
@@ -482,15 +477,11 @@ async function handleNetlifyList(chatId: number, msgId: number, args: string) {
       await editMenu(chatId, msgId, 'No Netlify sites.', [[btn('Back', 'm:dev')]]);
       return;
     }
-    var rows: any[][] = sites.map(function(s: any) {
-      return [btn(s.name || s.id, safeData('nd', s.id))];
-    });
+    var rows: any[][] = sites.map(function(s: any) { return [btn(s.name || s.id, safeData('nd', s.id, 'x'))]; });
     if (totalPages > 1) rows.push(paginationRow('nl', page, totalPages));
     rows.push([btn('Back', 'm:dev')]);
-    var header = 'Netlify Sites (' + (page + 1) + '/' + totalPages + ')\n\n' + sites.map(function(s: any) {
-      return s.name + ' - ' + (s.ssl_url || s.url || 'no url');
-    }).join('\n');
-    await editMenu(chatId, msgId, truncate(header), rows);
+    var header = 'Netlify Sites (' + (page + 1) + '/' + totalPages + ')\n\n' + sites.map(function(s: any) { return s.name + ' - ' + (s.ssl_url || s.url || 'no url'); }).join('\n');
+    await editMenu(chatId, msgId, truncate(header, 3800), rows);
   } catch (err: any) {
     await editMenu(chatId, msgId, 'Error: ' + err.message, [[btn('Back', 'm:dev')]]);
   }
@@ -522,9 +513,7 @@ async function handleCRMList(chatId: number, msgId: number, args: string) {
       await editMenu(chatId, msgId, 'No prospects. Use /addprospect.', [[btn('Back', 'm:crm')]]);
       return;
     }
-    var text = 'Prospects (' + (page + 1) + '/' + totalPages + ')\n\n' + prospects.map(function(p: any) {
-      return p.name + ' - ' + (p.company || '-') + ' (' + p.status + ')';
-    }).join('\n');
+    var text = 'Prospects (' + (page + 1) + '/' + totalPages + ')\n\n' + prospects.map(function(p: any) { return p.name + ' - ' + (p.company || '-') + ' (' + p.status + ')'; }).join('\n');
     var rows: any[][] = prospects.map(function(p: any) {
       return [
         btn('Contacted', safeData('ca', String(p.id), 'contacted')),
@@ -534,7 +523,7 @@ async function handleCRMList(chatId: number, msgId: number, args: string) {
     });
     if (totalPages > 1) rows.push(paginationRow('cr', page, totalPages));
     rows.push([btn('Back', 'm:crm')]);
-    await editMenu(chatId, msgId, truncate(text), rows);
+    await editMenu(chatId, msgId, truncate(text, 3800), rows);
   } catch (err: any) {
     await editMenu(chatId, msgId, 'Error: ' + err.message, [[btn('Back', 'm:crm')]]);
   }
@@ -562,10 +551,8 @@ async function handleOutreachList(chatId: number, msgId: number, args: string) {
       await editMenu(chatId, msgId, 'No drafts. Use /draft.', [[btn('Back', 'm:outreach')]]);
       return;
     }
-    var text = 'Drafts\n\n' + drafts.map(function(d: any) {
-      return d.prospect_name || 'Unknown';
-    }).join('\n');
-    await editMenu(chatId, msgId, truncate(text), [[btn('Back', 'm:outreach')]]);
+    var text = 'Drafts\n\n' + drafts.map(function(d: any) { return d.prospect_name || 'Unknown'; }).join('\n');
+    await editMenu(chatId, msgId, truncate(text, 3800), [[btn('Back', 'm:outreach')]]);
   } catch (err: any) {
     await editMenu(chatId, msgId, 'Error: ' + err.message, [[btn('Back', 'm:outreach')]]);
   }
@@ -621,10 +608,8 @@ async function handleWatchCI(chatId: number, msgId: number, args: string) {
       await editMenu(chatId, msgId, 'CI: ' + args + ' - No workflow runs.', [[btn('Back', safeData('ga', args, 'menu'))]]);
       return;
     }
-    var text = 'CI: ' + args + '\n\n' + runs.map(function(r: any) {
-      return r.name + ' - ' + (r.conclusion || r.status);
-    }).join('\n');
-    await editMenu(chatId, msgId, truncate(text), [[btn('Back', safeData('ga', args, 'menu'))]]);
+    var text = 'CI: ' + args + '\n\n' + runs.map(function(r: any) { return r.name + ' - ' + (r.conclusion || r.status); }).join('\n');
+    await editMenu(chatId, msgId, truncate(text, 3800), [[btn('Back', safeData('ga', args, 'menu'))]]);
   } catch (err: any) {
     await editMenu(chatId, msgId, 'Error: ' + err.message, [[btn('Back', safeData('ga', args, 'menu'))]]);
   }

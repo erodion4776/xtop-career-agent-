@@ -1,546 +1,426 @@
-import { sendMessage } from "./telegram.js";
-import { supabase } from "./supabase.js";
-import * as gh from "./github-client.js";
-import * as nf from "./netlify-client.js";
-import * as analyzer from "./code-analyzer.js";
-import { buildSite, type SiteType } from "./site-builder.js";
+import { sendMessage } from './telegram.js';
 
-function escapeMd(s: string): string {
-  return String(s).replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+// ─── Dynamic module loaders ────────────────────────────────────────
+
+async function getGitHubClient() {
+  const mod = await import('./github-client.js');
+  const Cls = (mod as any).GitHubClient || (mod as any).GithubClient ||
+    (mod as any).GitHub || (mod as any).default ||
+    Object.values(mod).find((v: any) => typeof v === 'function');
+  return new (Cls as any)();
 }
 
-// ── /repos ─────────────────────────────────────────────
-export async function handleRepos(chatId: number) {
+async function getNetlifyClient() {
+  const mod = await import('./netlify-client.js');
+  const Cls = (mod as any).NetlifyClient || (mod as any).Netlify ||
+    (mod as any).default ||
+    Object.values(mod).find((v: any) => typeof v === 'function');
+  return new (Cls as any)();
+}
+
+async function getCodeAnalyzer() {
+  return await import('./code-analyzer.js');
+}
+
+// ─── Main Entry ─────────────────────────────────────────────────────
+
+export async function handleDevCommand(
+  chatId: number,
+  text: string,
+  from: any,
+  cmd: string,
+  args: string
+): Promise<void> {
   try {
-    const repos = await gh.listRepos(15);
-    if (!repos.length) {
-      await sendMessage(chatId, "No repositories found for this token.");
+    switch (cmd) {
+      case '/repos':    await cmdRepos(chatId); break;
+      case '/browse':   await cmdBrowse(chatId, args); break;
+      case '/readfile': await cmdReadFile(chatId, args); break;
+      case '/analyze':  await cmdAnalyze(chatId, args); break;
+      case '/fix':      await cmdFix(chatId, args); break;
+      case '/watch':    await cmdWatch(chatId, args); break;
+      case '/newsite':  await cmdNewSite(chatId, args, from); break;
+      case '/netlify':  await cmdNetlify(chatId); break;
+      case '/deploy':   await cmdDeploy(chatId, args); break;
+      case '/ci':       await cmdWatch(chatId, args); break;
+      case '/devstatus': await cmdDevStatus(chatId); break;
+      default:
+        await sendMessage(chatId, `❓ Unknown dev command: ${cmd}`);
+    }
+  } catch (err: any) {
+    await sendMessage(chatId, `❌ Error: ${err.message}`);
+  }
+}
+
+// ─── /repos ─────────────────────────────────────────────────────────
+
+async function cmdRepos(chatId: number) {
+  const gh = await getGitHubClient();
+  try {
+    const result = await gh.listRepos(0, 10);
+    const repos: any[] = result?.repos || result || [];
+    if (repos.length === 0) {
+      await sendMessage(chatId, '📂 No repos found.');
       return;
     }
-    const lines = repos.map((r: any) =>
-      `• *${escapeMd(r.full_name)}*\n  ${escapeMd(r.description || "No description")} | ${escapeMd(r.language || "?")} | ⭐${r.stargazers_count}`
+    const text = '📂 *Your GitHub Repos*\n\n' +
+      repos.map((r: any) => `📁 ${r.full_name || r.name}`).join('\n');
+    await sendMessage(chatId, text);
+  } catch (err: any) {
+    await sendMessage(chatId, `❌ ${err.message}`);
+  }
+}
+
+// ─── /browse owner/repo [path] ──────────────────────────────────────
+
+async function cmdBrowse(chatId: number, args: string) {
+  if (!args) {
+    await sendMessage(chatId, 'Usage: `/browse owner/repo [path]`');
+    return;
+  }
+
+  const parts = args.split(/\s+/);
+  const repoFullName = parts[0];
+  const path = parts.slice(1).join('/') || '';
+  const [owner, repo] = repoFullName.split('/');
+
+  if (!owner || !repo) {
+    await sendMessage(chatId, '❌ Format: `/browse owner/repo [path]`');
+    return;
+  }
+
+  const gh = await getGitHubClient();
+  try {
+    const contents = await gh.listContents(owner, repo, path);
+    const items: any[] = contents || [];
+    if (items.length === 0) {
+      await sendMessage(chatId, `📂 *${repoFullName}/${path}*\n\nEmpty.`);
+      return;
+    }
+
+    items.sort((a: any, b: any) => {
+      if (a.type === 'dir' && b.type !== 'dir') return -1;
+      if (a.type !== 'dir' && b.type === 'dir') return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const text = `📂 *${repoFullName}/${path}*\n\n` +
+      items.slice(0, 20).map((i: any) =>
+        `${i.type === 'dir' ? '📁' : '📄'} ${i.name}`
+      ).join('\n');
+    await sendMessage(chatId, text);
+  } catch (err: any) {
+    await sendMessage(chatId, `❌ ${err.message}`);
+  }
+}
+
+// ─── /readfile owner/repo path ──────────────────────────────────────
+
+async function cmdReadFile(chatId: number, args: string) {
+  if (!args) {
+    await sendMessage(chatId, 'Usage: `/readfile owner/repo path/to/file`');
+    return;
+  }
+
+  const parts = args.split(/\s+/);
+  const repoFullName = parts[0];
+  const filePath = parts.slice(1).join('/');
+  const [owner, repo] = repoFullName.split('/');
+
+  if (!owner || !repo || !filePath) {
+    await sendMessage(chatId, '❌ Format: `/readfile owner/repo path/to/file`');
+    return;
+  }
+
+  const gh = await getGitHubClient();
+  try {
+    const content = await gh.getFileContent(owner, repo, filePath);
+    const truncated = content.length > 3500 ? content.slice(0, 3500) + '\n\n… *(truncated)*' : content;
+    await sendMessage(chatId, `📄 *${filePath}*\n\n\`\`\`\n${truncated}\n\`\`\``);
+  } catch (err: any) {
+    await sendMessage(chatId, `❌ ${err.message}`);
+  }
+}
+
+// ─── /analyze owner/repo description ────────────────────────────────
+
+async function cmdAnalyze(chatId: number, args: string) {
+  if (!args) {
+    await sendMessage(chatId, 'Usage: `/analyze owner/repo description of issue`');
+    return;
+  }
+
+  const spaceIdx = args.indexOf(' ');
+  if (spaceIdx < 0) {
+    await sendMessage(chatId, '❌ Format: `/analyze owner/repo description`\n\nExample: `/analyze erodion4776/xtop Build is failing`');
+    return;
+  }
+
+  const repoFullName = args.slice(0, spaceIdx);
+  const description = args.slice(spaceIdx + 1).trim();
+  const slashParts = repoFullName.split('/');
+
+  if (slashParts.length !== 2 || !slashParts[0] || !slashParts[1]) {
+    await sendMessage(chatId, '❌ Repo must be exactly `owner/repo` (two parts).\n\nExample: `/analyze erodion4776/xtop Build fails`');
+    return;
+  }
+
+  const [owner, repo] = slashParts;
+
+  await sendMessage(chatId, `🔍 *Analyzing ${repoFullName}…*\nThis may take 30-60 seconds.`);
+
+  try {
+    const analyzer = await getCodeAnalyzer();
+    const analyzeFn = (analyzer as any).analyzeIssue || (analyzer as any).analyzeError || (analyzer as any).analyze;
+    if (typeof analyzeFn !== 'function') {
+      await sendMessage(chatId, '⚠️ Code analyzer module has no analyze function.');
+      return;
+    }
+
+    const result = await analyzeFn(owner, repo, description);
+    const truncated = (result || 'No result').length > 3800
+      ? (result || '').slice(0, 3800) + '\n\n… *(truncated)*'
+      : (result || 'No result');
+    await sendMessage(chatId, `🔍 *Analysis: ${repoFullName}*\n\n${truncated}`);
+  } catch (err: any) {
+    await sendMessage(chatId, `❌ Analysis failed: ${err.message}`);
+  }
+}
+
+// ─── /fix owner/repo description ────────────────────────────────────
+
+async function cmdFix(chatId: number, args: string) {
+  if (!args) {
+    await sendMessage(chatId, 'Usage: `/fix owner/repo description of issue`');
+    return;
+  }
+
+  const spaceIdx = args.indexOf(' ');
+  if (spaceIdx < 0) {
+    await sendMessage(chatId, '❌ Format: `/fix owner/repo description`\n\nExample: `/fix erodion4776/xtop Missing types`');
+    return;
+  }
+
+  const repoFullName = args.slice(0, spaceIdx);
+  const description = args.slice(spaceIdx + 1).trim();
+  const slashParts = repoFullName.split('/');
+
+  if (slashParts.length !== 2 || !slashParts[0] || !slashParts[1]) {
+    await sendMessage(chatId, '❌ Repo must be exactly `owner/repo`.\n\nExample: `/fix erodion4776/xtop Missing types`');
+    return;
+  }
+
+  const [owner, repo] = slashParts;
+
+  await sendMessage(chatId, `🔧 *Generating fix for ${repoFullName}…*\nThis may take 1-2 minutes.`);
+
+  try {
+    const analyzer = await getCodeAnalyzer();
+    const fixFn = (analyzer as any).generateFix || (analyzer as any).fix || (analyzer as any).createFix;
+    if (typeof fixFn !== 'function') {
+      await sendMessage(chatId, '⚠️ Code analyzer module has no fix function.');
+      return;
+    }
+
+    const result = await fixFn(owner, repo, description);
+
+    // result is { diagnosis, branch, files: [{path, content}], prTitle, prBody }
+    const diagnosis = result?.diagnosis || 'No diagnosis';
+    const branch = result?.branch || 'fix/auto';
+    const files: any[] = result?.files || [];
+    const prTitle = result?.prTitle || `fix: ${description.slice(0, 50)}`;
+
+    let reply = `🔧 *Fix for ${repoFullName}*\n\n`;
+    reply += `*Diagnosis:* ${diagnosis}\n\n`;
+    reply += `*Branch:* \`${branch}\`\n`;
+    reply += `*PR Title:* ${prTitle}\n\n`;
+
+    if (files.length > 0) {
+      reply += `*Files to change (${files.length}):*\n`;
+      for (const f of files) {
+        reply += `📄 \`${f.path}\`\n`;
+      }
+      reply += '\n';
+
+      // Show first file content as preview
+      if (files[0]?.content) {
+        const preview = files[0].content.length > 1500
+          ? files[0].content.slice(0, 1500) + '\n… *(truncated)*'
+          : files[0].content;
+        reply += `*Preview (${files[0].path}):*\n\`\`\`\n${preview}\n\`\`\`\n\n`;
+      }
+
+      reply += '⚠️ *Apply this fix?*\nReply with `/apply ${repoFullName}` to create a PR.';
+    } else {
+      reply += 'No file changes generated. The diagnosis may still be useful above.';
+    }
+
+    const truncated = reply.length > 3800 ? reply.slice(0, 3800) + '\n\n… *(truncated)*' : reply;
+    await sendMessage(chatId, truncated);
+  } catch (err: any) {
+    await sendMessage(chatId, `❌ Fix failed: ${err.message}`);
+  }
+}
+
+// ─── /watch owner/repo ──────────────────────────────────────────────
+
+async function cmdWatch(chatId: number, args: string) {
+  const repoFullName = args.trim();
+  if (!repoFullName || !repoFullName.includes('/')) {
+    await sendMessage(chatId, 'Usage: `/watch owner/repo`');
+    return;
+  }
+
+  const [owner, repo] = repoFullName.split('/');
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    await sendMessage(chatId, '❌ GITHUB_TOKEN not set.');
+    return;
+  }
+
+  await sendMessage(chatId, `👁 *Checking CI for ${repoFullName}…*`);
+
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=5`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } }
     );
-    await sendMessage(chatId, `📦 *Your Repositories*\n\n${lines.join("\n\n")}`);
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+
+    if (!res.ok) {
+      await sendMessage(chatId, `⚠️ API error ${res.status}. Repo may not have GitHub Actions.`);
+      return;
+    }
+
+    const data = await res.json() as any;
+    const runs: any[] = data.workflow_runs || [];
+
+    if (runs.length === 0) {
+      await sendMessage(chatId, `⚠️ *CI: ${repoFullName}*\n\nNo workflow runs found.\nAdd \`.github/workflows/\` to enable CI.`);
+      return;
+    }
+
+    const text = `👁 *CI: ${repoFullName}*\n\n` + runs.map((r: any) => {
+      const icon = r.conclusion === 'success' ? '✅' : r.conclusion === 'failure' ? '❌' : r.status === 'in_progress' ? '🔄' : '⏳';
+      return `${icon} *${r.name}*\n${r.head_branch} • ${r.conclusion || r.status}\n_${r.created_at}_`;
+    }).join('\n\n');
+
+    await sendMessage(chatId, text.length > 3800 ? text.slice(0, 3800) + '\n…' : text);
+  } catch (err: any) {
+    await sendMessage(chatId, `❌ ${err.message}`);
   }
 }
 
-// ── /browse ────────────────────────────────────────────
-export async function handleBrowse(chatId: number, args: string) {
+// ─── /newsite [description] ─────────────────────────────────────────
+
+async function cmdNewSite(chatId: number, args: string, from: any) {
+  if (!args) {
+    await sendMessage(chatId,
+      '🆕 *New Site Builder*\n\nUsage: `/newsite description`\n\n' +
+      'Example: `/newsite A landing page for a hair salon`\n\n' +
+      'Or tap 🆕 New Site in the Dev Tools menu.'
+    );
+    return;
+  }
+
+  await sendMessage(chatId,
+    '🏗 *Building your site…*\n\nThis takes 1-2 minutes.\n' +
+    '1. Generating HTML with AI\n2. Creating GitHub repo\n3. Deploying to Netlify'
+  );
+
   try {
-    let owner: string, repo: string, path = "";
-    const parts = args.split(/\s+/);
-    if (!parts[0]) {
-      owner = gh.DEFAULT_REPO.owner;
-      repo = gh.DEFAULT_REPO.repo;
-    } else if (parts[0].includes("/")) {
-      const r = gh.parseRepo(parts[0]);
-      owner = r.owner; repo = r.repo;
-      path = parts.slice(1).join("/");
+    const sbMod = await import('./site-builder.js');
+    const buildFn = (sbMod as any).buildSite || (sbMod as any).createSite || (sbMod as any).default;
+    if (typeof buildFn === 'function') {
+      const result = await buildFn(args, from?.id || chatId);
+      await sendMessage(chatId,
+        `✅ *Site created!*\n\n` +
+        `🌐 URL: ${result?.url || 'check Netlify'}\n` +
+        `📂 Repo: ${result?.repo || 'check GitHub'}\n` +
+        `🚀 Deploy: ${result?.deployUrl || 'check Netlify dashboard'}`
+      );
     } else {
-      owner = gh.DEFAULT_REPO.owner;
-      repo = gh.DEFAULT_REPO.repo;
-      path = parts.join("/");
+      await sendMessage(chatId, '⚠️ Site builder module loaded but no build function found.');
     }
-
-    const contents = await gh.getContents(owner, repo, path);
-    const items = Array.isArray(contents) ? contents : [contents];
-    const lines = items.map((item: any) => {
-      const icon = item.type === "dir" ? "📁" : "📄";
-      return `${icon} ${escapeMd(item.name)}`;
-    });
-    const header = path ? `${owner}/${repo}/${path}` : `${owner}/${repo}`;
-    await sendMessage(chatId, `📂 *${escapeMd(header)}*\n\n${lines.join("\n")}`);
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  } catch (err: any) {
+    await sendMessage(chatId, `❌ Site build failed: ${err.message}`);
   }
 }
 
-// ── /readfile ──────────────────────────────────────────
-export async function handleReadFile(chatId: number, args: string) {
+// ─── /netlify ───────────────────────────────────────────────────────
+
+async function cmdNetlify(chatId: number) {
+  if (!process.env.NETLIFY_AUTH_TOKEN) {
+    await sendMessage(chatId, '❌ Netlify not configured.\nSet `NETLIFY_AUTH_TOKEN` env var on Render.');
+    return;
+  }
+
   try {
-    const parts = args.split(/\s+/);
-    if (parts.length < 2) {
-      await sendMessage(chatId, "Usage: `/readfile owner/repo path/to/file.ts`");
+    const nf = await getNetlifyClient();
+    const result = await nf.listSites(0, 10);
+    const sites: any[] = result?.sites || result || [];
+
+    if (sites.length === 0) {
+      await sendMessage(chatId, '🌐 No Netlify sites found.');
       return;
     }
-    const r = gh.parseRepo(parts[0]);
-    const filePath = parts.slice(1).join("/");
-    const file = await gh.getFile(r.owner, r.repo, filePath);
-    const preview = file.content.length > 3500
-      ? file.content.slice(0, 3500) + "\n\n... (truncated)"
-      : file.content;
-    await sendMessage(chatId, `📄 *${escapeMd(filePath)}* (${file.size} bytes)\n\`\`\`\n${preview}\n\`\`\``);
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+
+    const text = '🌐 *Netlify Sites*\n\n' +
+      sites.map((s: any) => `• *${s.name || s.id}*\n  ${s.ssl_url || s.url || 'no url'}`).join('\n\n');
+    await sendMessage(chatId, text);
+  } catch (err: any) {
+    await sendMessage(chatId, `❌ ${err.message}`);
   }
 }
 
-// ── /analyze ───────────────────────────────────────────
-export async function handleAnalyze(chatId: number, args: string) {
-  try {
-    const parts = args.split(/\s+/);
-    if (parts.length < 2) {
-      await sendMessage(chatId, "Usage: `/analyze owner/repo description of the problem`");
+// ─── /deploy [render|netlify] ───────────────────────────────────────
+
+async function cmdDeploy(chatId: number, args: string) {
+  const target = args.trim().toLowerCase();
+
+  if (!target || target === 'render') {
+    const serviceId = process.env.RENDER_SERVICE_ID;
+    const apiKey = process.env.RENDER_API_KEY;
+    if (!serviceId || !apiKey) {
+      await sendMessage(chatId, '❌ Render not configured.\nSet RENDER_API_KEY + RENDER_SERVICE_ID.');
       return;
     }
-    const r = gh.parseRepo(parts[0]);
-    const description = parts.slice(1).join(" ");
 
-    await sendMessage(chatId, `🔍 Analyzing *${escapeMd(r.owner + "/" + r.repo)}*...\nThis may take 30-60 seconds.`);
-
-    const files: { path: string; content: string }[] = [];
-    const toRead = ["package.json", "tsconfig.json", "src/index.ts"];
-    for (const p of toRead) {
-      try {
-        const f = await gh.getFile(r.owner, r.repo, p);
-        files.push({ path: p, content: f.content });
-      } catch { /* skip */ }
-    }
-
-    let errorLog = "";
+    await sendMessage(chatId, '▲ *Deploying to Render…*');
     try {
-      const commits = await gh.getCommits(r.owner, r.repo, "main", 5);
-      errorLog = "Recent commits:\n" + commits.map((c: any) =>
-        `- ${c.sha.slice(0, 7)}: ${c.commit.message.split("\n")[0]}`
-      ).join("\n");
-    } catch { /* ok */ }
-
-    try {
-      const runs = await gh.getWorkflowRuns(r.owner, r.repo, 3);
-      const failed = runs.workflow_runs?.filter((r: any) => r.conclusion === "failure");
-      if (failed?.length) {
-        errorLog += "\n\nFailed CI runs:\n" + failed.map((r: any) =>
-          `- ${r.name} #${r.run_number}: ${r.head_branch} (${r.created_at})`
-        ).join("\n");
-      }
-    } catch { /* ok */ }
-
-    if (!files.length && !errorLog) {
-      await sendMessage(chatId, "⚠️ Could not read any files or logs. Check repo access.");
-      return;
-    }
-
-    const diagnosis = await analyzer.analyzeError(errorLog, files, description);
-
-    const report = [
-      `🔬 *Analysis Report*`,
-      ``,
-      `*Severity:* ${escapeMd(diagnosis.severity.toUpperCase())}`,
-      `*Confidence:* ${diagnosis.confidence}%`,
-      ``,
-      `*Diagnosis:* ${escapeMd(diagnosis.diagnosis)}`,
-      ``,
-      `*Root Cause:* ${escapeMd(diagnosis.root_cause)}`,
-      ``,
-      `*Files to Fix:*`,
-      ...diagnosis.files_to_fix.map((f) => `  • ${escapeMd(f.path)}: ${escapeMd(f.reason)}`),
-      ``,
-      `Use /fix ${r.owner}/${r.repo} ${description} to apply a fix.`,
-    ];
-    await sendMessage(chatId, report.join("\n"));
-
-    await supabase.from("audit_log").insert({
-      action: "dev_analyze",
-      details: { repo: `${r.owner}/${r.repo}`, description, diagnosis },
-    });
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ Analysis failed: ${escapeMd(e.message)}`);
-  }
-}
-
-// ── /fix ───────────────────────────────────────────────
-export async function handleFix(chatId: number, args: string) {
-  try {
-    const parts = args.split(/\s+/);
-    if (parts.length < 2) {
-      await sendMessage(chatId, "Usage: `/fix owner/repo description of the problem`");
-      return;
-    }
-    const r = gh.parseRepo(parts[0]);
-    const description = parts.slice(1).join(" ");
-    const repoFullName = `${r.owner}/${r.repo}`;
-
-    await sendMessage(chatId, `🔧 Starting fix for *${escapeMd(repoFullName)}*...\nStep 1/5: Reading files`);
-
-    const keyFiles = ["package.json", "tsconfig.json", "src/index.ts", "src/telegram-handler.ts", "src/supabase.ts"];
-    const files: { path: string; content: string; sha?: string }[] = [];
-    for (const p of keyFiles) {
-      try {
-        const f = await gh.getFile(r.owner, r.repo, p);
-        files.push({ path: p, content: f.content, sha: f.sha });
-      } catch { /* skip */ }
-    }
-
-    if (!files.length) {
-      await sendMessage(chatId, "⚠️ Could not read any files from the repo.");
-      return;
-    }
-
-    await sendMessage(chatId, `Step 2/5: Analyzing with AI...`);
-
-    let errorLog = "";
-    try {
-      const runs = await gh.getWorkflowRuns(r.owner, r.repo, 3);
-      const failed = runs.workflow_runs?.filter((r: any) => r.conclusion === "failure");
-      if (failed?.length) {
-        errorLog = "Failed CI: " + failed.map((r: any) => `${r.name} on ${r.head_branch}`).join("; ");
-      }
-    } catch { /* ok */ }
-
-    const diagnosis = await analyzer.analyzeError(errorLog, files, description);
-    await sendMessage(chatId, `Step 3/5: Generating fix...\n_Diagnosis: ${escapeMd(diagnosis.diagnosis)}_`);
-
-    const fixes = await analyzer.generateFix(diagnosis, files);
-    if (!fixes.length) {
-      await sendMessage(chatId, "⚠️ AI could not generate a fix. Try a more specific description.");
-      return;
-    }
-
-    await sendMessage(chatId, `Step 4/5: Reviewing changes...`);
-    const originals = fixes.map((fix) => {
-      const orig = files.find((f) => f.path === fix.path);
-      return { path: fix.path, content: orig?.content || "" };
-    });
-    const review = await analyzer.reviewChanges(originals, fixes.map((f) => ({ path: f.path, content: f.content })));
-
-    if (!review.safe) {
-      await sendMessage(chatId, `⚠️ Review found issues:\n${review.issues.map((i) => `• ${escapeMd(i)}`).join("\n")}\n\nFix not applied.`);
-      return;
-    }
-
-    await sendMessage(chatId, `Step 5/5: Creating branch and PR...`);
-    const branchName = `fix/${Date.now()}-${description.slice(0, 20).replace(/[^a-z0-9]/gi, "-").toLowerCase()}`;
-    await gh.createBranch(r.owner, r.repo, branchName);
-
-    const commitMessages: string[] = [];
-    for (const fix of fixes) {
-      const orig = files.find((f) => f.path === fix.path);
-      await gh.createOrUpdateFile(
-        r.owner, r.repo, fix.path,
-        fix.content,
-        `fix: ${fix.explanation}`,
-        branchName,
-        orig?.sha
-      );
-      commitMessages.push(`• ${fix.path}: ${fix.explanation}`);
-    }
-
-    const prBody = [
-      `## 🔧 Autonomous Fix`,
-      `**Problem:** ${description}`,
-      `**Diagnosis:** ${diagnosis.diagnosis}`,
-      `**Root Cause:** ${diagnosis.root_cause}`,
-      `**Severity:** ${diagnosis.severity}`,
-      `**Confidence:** ${diagnosis.confidence}%`,
-      ``,
-      `### Changes`,
-      ...commitMessages,
-      ``,
-      `_Generated by XTOP Dev Agent. Review before merging._`,
-    ].join("\n");
-
-    const pr = await gh.createPR(r.owner, r.repo, `fix: ${diagnosis.diagnosis}`, prBody, branchName);
-
-    await sendMessage(chatId, [
-      `✅ *Fix Applied!*`,
-      `*Branch:* \`${escapeMd(branchName)}\``,
-      `*PR:* ${escapeMd(pr.html_url)}`,
-      ``,
-      ...commitMessages.map((m) => escapeMd(m)),
-      ``,
-      `⚠️ Review the PR before merging.`,
-    ].join("\n"));
-
-    await supabase.from("audit_log").insert({
-      action: "dev_fix",
-      details: { repo: repoFullName, branch: branchName, pr: pr.number, files: fixes.map((f) => f.path) },
-    });
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ Fix failed: ${escapeMd(e.message)}`);
-  }
-}
-
-// ── /watch ─────────────────────────────────────────────
-export async function handleWatch(chatId: number, args: string) {
-  try {
-    const r = args ? gh.parseRepo(args.split(/\s+/)[0]) : gh.DEFAULT_REPO;
-    const repoFullName = `${r.owner}/${r.repo}`;
-
-    await sendMessage(chatId, `👁️ Checking CI for *${escapeMd(repoFullName)}*...`);
-
-    const runs = await gh.getWorkflowRuns(r.owner, r.repo, 5);
-    if (!runs.workflow_runs?.length) {
-      await sendMessage(chatId, `No CI runs found. Add a workflow file first.`);
-      return;
-    }
-
-    const latest = runs.workflow_runs[0];
-    const icon = latest.conclusion === "success" ? "✅" : latest.conclusion === "failure" ? "❌" : "⏳";
-
-    const lines = [
-      `👁️ *CI Watch: ${escapeMd(repoFullName)}*`,
-      ``,
-      `${icon} *Latest:* ${escapeMd(latest.name)} #${latest.run_number}`,
-      `Status: ${escapeMd(latest.conclusion || latest.status)}`,
-      `Branch: ${escapeMd(latest.head_branch)}`,
-      `Time: ${escapeMd(latest.created_at?.slice(0, 16) || "?")}`,
-    ];
-
-    // Show all recent runs
-    lines.push("", "*Recent Runs:*");
-    for (const run of runs.workflow_runs.slice(0, 5)) {
-      const ri = run.conclusion === "success" ? "✅" : run.conclusion === "failure" ? "❌" : "⏳";
-      lines.push(`${ri} ${escapeMd(run.head_branch)} — ${escapeMd(run.conclusion || run.status)}`);
-    }
-
-    // If failing, offer to fix
-    if (latest.conclusion === "failure") {
-      lines.push(
-        "",
-        `⚠️ *Latest build is failing!*`,
-        `Use /fix ${repoFullName} <description> to auto-fix.`,
-      );
-
-      // Try to get error details
-      try {
-        const jobs = await gh.getWorkflowRunJobs(r.owner, r.repo, latest.id);
-        const failedJobs = jobs.jobs?.filter((j: any) => j.conclusion === "failure");
-        if (failedJobs?.length) {
-          lines.push("", "*Failed Steps:*");
-          for (const job of failedJobs) {
-            const failedSteps = job.steps?.filter((s: any) => s.conclusion === "failure");
-            for (const step of failedSteps || []) {
-              lines.push(`  ❌ ${escapeMd(step.name)} (${escapeMd(job.name)})`);
-            }
-          }
-          lines.push("", `Try: /fix ${repoFullName} ${escapeMd(failedJobs[0].steps?.find((s: any) => s.conclusion === "failure")?.name || "build error")}`);
-        }
-      } catch { /* can't get job details */ }
-    }
-
-    await sendMessage(chatId, lines.join("\n"));
-
-    await supabase.from("audit_log").insert({
-      action: "dev_watch",
-      details: { repo: repoFullName, status: latest.conclusion },
-    });
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
-  }
-}
-
-// ── /newsite ───────────────────────────────────────────
-export async function handleNewSite(chatId: number, args: string) {
-  try {
-    const parts = args.split(/\s+/);
-    if (parts.length < 2) {
-      await sendMessage(chatId, [
-        "Usage: `/newsite <name> <type> [description]`",
-        "",
-        "*Types:* landing, portfolio, business, blog",
-        "",
-        "*Examples:*",
-        "`/newsite my-bakery landing A modern bakery website`",
-        "`/newsite john-doe portfolio Photography portfolio`",
-        "`/newsite tech-corp business IT consulting firm`",
-      ].join("\n"));
-      return;
-    }
-
-    const siteName = parts[0];
-    const type = parts[1] as SiteType;
-    const description = parts.slice(2).join(" ") || `${siteName} website`;
-    const owner = gh.DEFAULT_REPO.owner;
-
-    if (!["landing", "portfolio", "business", "blog"].includes(type)) {
-      await sendMessage(chatId, "❌ Invalid type. Use: landing, portfolio, business, or blog");
-      return;
-    }
-
-    await sendMessage(chatId, `🌐 *Creating new site: ${escapeMd(siteName)}*\nType: ${escapeMd(type)}\nThis may take 1-2 minutes...`);
-
-    const progressCb = async (msg: string) => {
-      await sendMessage(chatId, msg);
-    };
-
-    const result = await buildSite(owner, siteName, type, description, progressCb);
-
-    await sendMessage(chatId, [
-      `🎉 *Site Created!*`,
-      ``,
-      `*Name:* ${escapeMd(siteName)}`,
-      `*Type:* ${escapeMd(type)}`,
-      `*GitHub:* ${escapeMd(result.repoUrl)}`,
-      `*Live:* ${escapeMd(result.siteUrl)}`,
-      ``,
-      `✅ Your site is live! Edit files on GitHub to update.`,
-    ].join("\n"));
-
-    await supabase.from("audit_log").insert({
-      action: "dev_newsite",
-      details: { name: siteName, type, repo: result.repoUrl, site: result.siteUrl },
-    });
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ Site creation failed: ${escapeMd(e.message)}`);
-  }
-}
-
-// ── /netlify ───────────────────────────────────────────
-export async function handleNetlify(chatId: number) {
-  try {
-    if (!nf.isConfigured()) {
-      await sendMessage(chatId, "❌ NETLIFY\\_AUTH\\_TOKEN not set.");
-      return;
-    }
-
-    await sendMessage(chatId, "🔍 Fetching your Netlify sites...");
-    const sites = await nf.listSites();
-
-    if (!sites.length) {
-      await sendMessage(chatId, "No sites found on your Netlify account.");
-      return;
-    }
-
-    const lines = sites.map((s: any, i: number) => {
-      const status = s.published_deploy?.state || s.state || "unknown";
-      const icon = status === "ready" ? "✅" : status === "error" ? "❌" : "⏳";
-      const url = s.ssl_url || s.url || "no url";
-      return `${icon} *${i + 1}. ${escapeMd(s.name || "unnamed")}*\n  ${escapeMd(url)}\n  Status: ${escapeMd(status)}`;
-    });
-
-    await sendMessage(chatId, `🌐 *Your Netlify Sites (${sites.length})*\n\n${lines.join("\n\n")}\n\nUse /deploy netlify <name> to deploy.`);
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
-  }
-}
-
-// ── /deploy ────────────────────────────────────────────
-export async function handleDeploy(chatId: number, args: string) {
-  try {
-    const parts = args.toLowerCase().trim().split(/\s+/);
-    const target = parts[0] || "render";
-
-    if (target === "render") {
-      const apiKey = process.env.RENDER_API_KEY;
-      const serviceId = process.env.RENDER_SERVICE_ID || "srv-dbf6gi0ae00c73ev0l9g";
-      if (!apiKey) {
-        await sendMessage(chatId, "❌ RENDER\\_API\\_KEY not set");
-        return;
-      }
-      await sendMessage(chatId, "🚀 Triggering Render deployment...");
       const res = await fetch(`https://api.render.com/v1/services/${serviceId}/deploys`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       });
-      if (!res.ok) throw new Error(`Render ${res.status}`);
-      const data = await res.json();
-      await sendMessage(chatId, `✅ Deploy triggered!\nID: \`${escapeMd(data.id || "unknown")}\``);
-
-    } else if (target === "netlify") {
-      if (!nf.isConfigured()) {
-        await sendMessage(chatId, "❌ NETLIFY\\_AUTH\\_TOKEN not set");
-        return;
-      }
-      const query = parts.slice(1).join(" ");
-      if (!query) {
-        await sendMessage(chatId, "Usage: `/deploy netlify <site name or number>`\nUse /netlify to see your sites.");
-        return;
-      }
-      await sendMessage(chatId, `🔍 Finding Netlify site...`);
-      const sites = await nf.listSites();
-      const num = parseInt(query, 10);
-      let site: any = null;
-      if (!isNaN(num) && num >= 1 && num <= sites.length) {
-        site = sites[num - 1];
-      } else {
-        site = await nf.findSite(query);
-      }
-      if (!site) {
-        await sendMessage(chatId, `❌ No site matching "${escapeMd(query)}". Use /netlify.`);
-        return;
-      }
-      await sendMessage(chatId, `🚀 Deploying *${escapeMd(site.name)}*...`);
-      const result = await nf.triggerDeploy(site.id);
-      await sendMessage(chatId, `✅ *${escapeMd(site.name)}* deploy triggered via ${escapeMd(result.method)}!`);
-
-    } else {
-      await sendMessage(chatId, "Usage: `/deploy render` or `/deploy netlify <site>`");
+      const deploy = await res.json() as any;
+      await sendMessage(chatId, `✅ *Render deploy triggered!*\n\nID: \`${deploy?.id || 'ok'}\``);
+    } catch (err: any) {
+      await sendMessage(chatId, `❌ Deploy failed: ${err.message}`);
     }
-
-    await supabase.from("audit_log").insert({
-      action: "deploy",
-      details: { target },
-    });
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ Deploy failed: ${escapeMd(e.message)}`);
+    return;
   }
+
+  if (target === 'netlify') {
+    await sendMessage(chatId, '🌐 Use the Netlify button in Dev Tools to deploy a specific site.');
+    return;
+  }
+
+  await sendMessage(chatId, 'Usage: `/deploy [render|netlify]`');
 }
 
-// ── /ci ────────────────────────────────────────────────
-export async function handleCI(chatId: number, args: string) {
-  try {
-    const r = args ? gh.parseRepo(args.split(/\s+/)[0]) : gh.DEFAULT_REPO;
-    const runs = await gh.getWorkflowRuns(r.owner, r.repo, 5);
-    if (!runs.workflow_runs?.length) {
-      await sendMessage(chatId, `No workflow runs found for *${escapeMd(r.owner + "/" + r.repo)}*.`);
-      return;
-    }
-    const lines = runs.workflow_runs.map((run: any) => {
-      const icon = run.conclusion === "success" ? "✅" : run.conclusion === "failure" ? "❌" : "⏳";
-      return `${icon} ${escapeMd(run.name)} #${run.run_number}\n  ${escapeMd(run.head_branch)} | ${escapeMd(run.conclusion || run.status)}`;
-    });
-    await sendMessage(chatId, `🔄 *CI: ${escapeMd(r.owner + "/" + r.repo)}*\n\n${lines.join("\n\n")}`);
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
-  }
-}
+// ─── /devstatus ─────────────────────────────────────────────────────
 
-// ── /devstatus ─────────────────────────────────────────
-export async function handleDevStatus(chatId: number) {
-  try {
-    const { data: logs } = await supabase
-      .from("audit_log")
-      .select("action, details, created_at")
-      .in("action", ["dev_analyze", "dev_fix", "dev_watch", "dev_newsite", "deploy"])
-      .order("created_at", { ascending: false })
-      .limit(10);
+async function cmdDevStatus(chatId: number) {
+  const gh = !!process.env.GITHUB_TOKEN;
+  const render = !!process.env.RENDER_API_KEY;
+  const netlify = !!process.env.NETLIFY_AUTH_TOKEN;
+  const gemini = !!process.env.GEMINI_API_KEY;
 
-    if (!logs?.length) {
-      await sendMessage(chatId, "No dev activity yet.");
-      return;
-    }
-
-    const icons: Record<string, string> = {
-      dev_fix: "🔧", deploy: "🚀", dev_analyze: "🔍", dev_watch: "👁️", dev_newsite: "🌐",
-    };
-    const lines = (logs as any[]).map((l) => {
-      const icon = icons[l.action] || "📝";
-      const repo = l.details?.repo || l.details?.target || l.details?.name || "?";
-      return `${icon} ${escapeMd(l.action)} → ${escapeMd(repo)}\n  ${escapeMd(l.created_at?.slice(0, 16) || "?")}`;
-    });
-    await sendMessage(chatId, `📊 *Dev Activity*\n\n${lines.join("\n\n")}`);
-  } catch (e: any) {
-    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
-  }
-}
-
-// ── Router ─────────────────────────────────────────────
-export async function handleDevCommand(chatId: number, cmd: string, args: string, fullText: string) {
-  switch (cmd) {
-    case "/repos": return handleRepos(chatId);
-    case "/browse": return handleBrowse(chatId, args);
-    case "/readfile": return handleReadFile(chatId, args);
-    case "/analyze": return handleAnalyze(chatId, args);
-    case "/fix": return handleFix(chatId, args);
-    case "/watch": return handleWatch(chatId, args);
-    case "/newsite": return handleNewSite(chatId, args);
-    case "/netlify": return handleNetlify(chatId);
-    case "/deploy": return handleDeploy(chatId, args);
-    case "/ci": return handleCI(chatId, args);
-    case "/devstatus": return handleDevStatus(chatId);
-    default:
-      await sendMessage(chatId, "Unknown dev command.");
-  }
+  await sendMessage(chatId,
+    `🛠 *Dev Agent Status*\n\n` +
+    `🐙 GitHub: ${gh ? '✅' : '❌'}\n` +
+    `▲ Render: ${render ? '✅' : '❌'}\n` +
+    `🌐 Netlify: ${netlify ? '✅' : '❌'}\n` +
+    `🤖 Gemini: ${gemini ? '✅' : '❌'}\n` +
+    `📦 Model: ${process.env.GEMINI_MODEL || 'gemini-2.0-flash'}`
+  );
 }

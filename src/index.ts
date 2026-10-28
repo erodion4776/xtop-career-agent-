@@ -49,8 +49,13 @@ app.post("/telegram/webhook", async (req, res) => {
 // ── Gmail OAuth routes ─────────────────────────────────
 app.get("/auth/google", async (_req, res) => {
   try {
-    const { getAuthUrl } = await import("./gmail.js");
-    const url = await getAuthUrl();
+    const gmail = await import("./gmail.js") as any;
+    const getAuth = gmail.getAuthUrl || gmail.getAuthLink || gmail.authUrl || gmail.getOAuthUrl;
+    if (typeof getAuth !== "function") {
+      res.status(500).send("Gmail auth function not found. Check gmail.ts exports.");
+      return;
+    }
+    const url = await getAuth();
     res.redirect(url);
   } catch (e: any) {
     res.status(500).send(`Auth error: ${e.message}`);
@@ -59,8 +64,13 @@ app.get("/auth/google", async (_req, res) => {
 
 app.get("/auth/google/callback", async (req, res) => {
   try {
-    const { handleCallback } = await import("./gmail.js");
-    await handleCallback(req.query.code as string);
+    const gmail = await import("./gmail.js") as any;
+    const handleCb = gmail.handleCallback || gmail.handleAuth || gmail.exchangeCode || gmail.handleOAuthCallback;
+    if (typeof handleCb !== "function") {
+      res.status(500).send("Gmail callback function not found. Check gmail.ts exports.");
+      return;
+    }
+    await handleCb(req.query.code as string);
     res.send("✅ Gmail connected! You can close this window.");
   } catch (e: any) {
     res.status(500).send(`Callback error: ${e.message}`);

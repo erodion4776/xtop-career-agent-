@@ -1,7 +1,7 @@
 import { sendMessage, editMessageText, answerCallbackQuery } from './telegram.js';
 import { editMenu, btn } from './ui-engine.js';
 
-// ─── Dynamic module loaders (avoids import name mismatches) ────────
+// ─── Dynamic module loaders ────────────────────────────────────────
 
 async function getSupabase() {
   const mod = await import('./supabase.js');
@@ -28,6 +28,21 @@ async function getNetlifyClient() {
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
+async function setSession(chatId: number, userId: number, workflow: string, state: any) {
+  try {
+    const sb = await getSupabase();
+    await sb.from('bot_sessions').upsert({
+      chat_id: chatId,
+      user_id: userId,
+      workflow,
+      state,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error('⚠️ setSession failed:', e);
+  }
+}
+
 function truncate(s: string, max = 3800): string {
   if (s.length <= max) return s;
   return s.slice(0, max) + '\n\n… *(truncated)*';
@@ -45,7 +60,7 @@ function safeData(prefix: string, ...parts: string[]): string {
 function paginationRow(prefix: string, page: number, total: number): any[] {
   const row: any[] = [];
   if (page > 0) row.push(btn('⬅️', `${prefix}:${page - 1}`));
-  row.push(btn(`${page + 1}/${total}`, `m:noop`));
+  row.push(btn(`${page + 1}/${total}`, 'm:noop'));
   if (page < total - 1) row.push(btn('➡️', `${prefix}:${page + 1}`));
   return row;
 }
@@ -60,6 +75,7 @@ export async function handleCallback(update: any): Promise<void> {
   const msgId: number = cb.message.message_id;
   const data: string = cb.data || '';
   const cbId: string = cb.id;
+  const userId: number = cb.from?.id || chatId;
 
   await answerCallbackQuery(cbId, '⏳').catch(() => {});
 
@@ -83,7 +99,7 @@ export async function handleCallback(update: any): Promise<void> {
       case 'ca': await handleCRMAction(chatId, msgId, args, cbId); break;
       case 'ol': await handleOutreachList(chatId, msgId, args); break;
       case 'dp': await handleDeploy(chatId, msgId, args, cbId); break;
-      case 'ns': await handleNewSite(chatId, msgId, args, cbId); break;
+      case 'ns': await handleNewSite(chatId, msgId, args, cbId, userId); break;
       case 'wt': await handleWatchCI(chatId, msgId, args, cbId); break;
       case 'cf': await handleConfirm(chatId, msgId, args, cbId); break;
       default:
@@ -147,19 +163,23 @@ async function handleMenu(chatId: number, msgId: number, target: string) {
       break;
 
     case 'tasks': {
-      const sb = await getSupabase();
-      const { data: tasks } = await sb
-        .from('tasks')
-        .select('id, type, status, created_at')
-        .order('created_at', { ascending: false })
-        .limit(10);
-      const list = (tasks as any[]) || [];
-      const text = list.length === 0
-        ? '📋 *Tasks*\n\nNo tasks yet.'
-        : '📋 *Recent Tasks*\n\n' + list.map((t: any) =>
-            `${t.status === 'done' ? '✅' : t.status === 'running' ? '🔄' : '⏳'} ${t.type} — ${t.status}\n_${t.created_at}_`
-          ).join('\n\n');
-      await editMenu(chatId, msgId, text, [[btn('⬅️ Back', 'm:main')]]);
+      try {
+        const sb = await getSupabase();
+        const { data: tasks } = await sb
+          .from('tasks')
+          .select('id, type, status, created_at')
+          .order('created_at', { ascending: false })
+          .limit(10);
+        const list = (tasks as any[]) || [];
+        const text = list.length === 0
+          ? '📋 *Tasks*\n\nNo tasks yet.'
+          : '📋 *Recent Tasks*\n\n' + list.map((t: any) =>
+              `${t.status === 'done' ? '✅' : t.status === 'running' ? '🔄' : '⏳'} ${t.type} — ${t.status}\n_${t.created_at}_`
+            ).join('\n\n');
+        await editMenu(chatId, msgId, text, [[btn('⬅️ Back', 'm:main')]]);
+      } catch {
+        await editMenu(chatId, msgId, '📋 *Tasks*\n\nCould not load.', [[btn('⬅️ Back', 'm:main')]]);
+      }
       break;
     }
 
@@ -219,19 +239,11 @@ async function handleMenu(chatId: number, msgId: number, target: string) {
       break;
 
     case 'gh_status': {
-      try {
-        const gh = await getGitHubClient();
-        const ok = (gh as any).isConfigured ? (gh as any).isConfigured() : !!process.env.GITHUB_TOKEN;
-        await editMenu(chatId, msgId,
-          `🐙 *GitHub*\n\nStatus: ${ok ? '✅ Connected' : '❌ Not configured'}\n\nSet GITHUB_TOKEN env var if missing.`,
-          [[btn('📂 Repos', 'gr:0'), btn('⬅️ Back', 'm:infra')]]
-        );
-      } catch {
-        await editMenu(chatId, msgId,
-          `🐙 *GitHub*\n\nStatus: ${process.env.GITHUB_TOKEN ? '✅ Token set' : '❌ Not configured'}`,
-          [[btn('📂 Repos', 'gr:0'), btn('⬅️ Back', 'm:infra')]]
-        );
-      }
+      const ok = !!process.env.GITHUB_TOKEN;
+      await editMenu(chatId, msgId,
+        `🐙 *GitHub*\n\nStatus: ${ok ? '✅ Connected' : '❌ Not configured'}\n\nSet GITHUB_TOKEN env var if missing.`,
+        [[btn('📂 Repos', 'gr:0'), btn('⬅️ Back', 'm:infra')]]
+      );
       break;
     }
 
@@ -747,8 +759,9 @@ async function handleDeploy(chatId: number, msgId: number, args: string, cbId: s
 
 // ─── New Site Builder ───────────────────────────────────────────────
 
-async function handleNewSite(chatId: number, msgId: number, args: string, cbId: string) {
+async function handleNewSite(chatId: number, msgId: number, args: string, cbId: string, userId: number) {
   if (args === 'start') {
+    await setSession(chatId, userId, 'newsite', { step: 'describe' });
     await editMenu(chatId, msgId,
       '🆕 *New Site Builder*\n\nSend a message describing the site:\n\n' +
       '_Example:_\n"A portfolio for a photographer"\n\n' +

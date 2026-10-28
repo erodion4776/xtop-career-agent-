@@ -548,6 +548,69 @@ async function routeCommand(
   }
 
   // ── NATURAL LANGUAGE FALLBACK ─────────────────
+  // ── NATURAL LANGUAGE: AUTO-DETECT PROSPECTS ───
+
+  // Detect patterns like:
+  //   "Ruth empire / ruth@email.com / 08012345678"
+  //   "Ruth empire | ruth@email.com | 08012345678"
+  //   "Ruth empire, ruth@email.com, 08012345678"
+  const emailPattern = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
+  const phonePattern = /(?:\+?234|0)\d{9,10}/;
+  const hasEmail = emailPattern.test(text);
+  const hasPhone = phonePattern.test(text);
+
+  // If the message contains an email or phone and looks like
+  // it has a business name before it, treat it as a prospect.
+  if (hasEmail || hasPhone) {
+    // Split on common separators: / | ,
+    const parts = text.split(/[/|,]/).map((s) => s.trim()).filter(Boolean);
+
+    if (parts.length >= 1) {
+      const businessName = parts[0].replace(emailPattern, "").replace(phonePattern, "").trim();
+      const email = parts.find((p) => emailPattern.test(p))?.match(emailPattern)?.[0];
+      const phone = parts.find((p) => phonePattern.test(p))?.match(phonePattern)?.[0];
+
+      if (businessName.length >= 2) {
+        try {
+          const prospect = await addProspect({
+            business_name: businessName,
+            email,
+            phone,
+            source: "telegram_natural",
+          });
+
+          await sendMessage(
+            chatId,
+            [
+              "✅ *Prospect Added* (auto-detected)",
+              "",
+              `Business: ${escapeMd(prospect.business_name)}`,
+              `Score: ${prospect.score}/100`,
+              `Status: ${escapeMd(prospect.status)}`,
+              `City: ${escapeMd(prospect.city)}`,
+              email ? `Email: ${escapeMd(email)}` : "",
+              phone ? `Phone: ${escapeMd(phone)}` : "",
+              "",
+              "Tip: Use /addprospect Name | email | phone for more control.",
+            ]
+              .filter(Boolean)
+              .join("\n"),
+            { parseMode: "Markdown" }
+          );
+          return;
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "unknown";
+          await sendMessage(
+            chatId,
+            `⚠️ Tried to add a prospect but failed: ${escapeMd(msg)}`
+          );
+          return;
+        }
+      }
+    }
+  }
+
+  // ── NATURAL LANGUAGE FALLBACK ─────────────────
 
   await sendMessage(
     chatId,
@@ -562,34 +625,4 @@ async function routeCommand(
 
   await logAction("unrecognised_command", {
     text: text.slice(0, 200),
-  });
-}
-
-async function handleCallback(
-  callback: Record<string, unknown>
-): Promise<void> {
-  const from = callback.from as
-    | Record<string, unknown>
-    | undefined;
-  const data = callback.data as string | undefined;
-  const queryId = callback.id as string;
-
-  if (!from || !queryId) return;
-
-  const userId = from.id as number;
-
-  if (!isOwner(userId)) {
-    await answerCallback(queryId, "Unauthorised.");
-    return;
   }
-
-  if (!data) {
-    await answerCallback(queryId, "No action data.");
-    return;
-  }
-
-  await answerCallback(
-    queryId,
-    `Action "${data}" received. Button handlers coming in Stage 2.`
-  );
-}

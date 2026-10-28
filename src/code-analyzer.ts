@@ -1,159 +1,181 @@
-import { GoogleGenAI } from "@google/genai";
+// ─── Gemini API with aggressive retry ──────────────────────────────
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+async function callGemini(prompt: string, maxRetries = 5): Promise<string> {
+  const { GoogleGenAI } = await import('@google/genai');
+  const apiKey = process.env.GEMINI_API_KEY;
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  if (!apiKey) throw new Error('GEMINI_API_KEY not set');
 
-// ── Retry helper ───────────────────────────────────────
-async function callGemini(prompt: string, retries = 3): Promise<string> {
-  for (let attempt = 1; attempt <= retries; attempt++) {
+  const ai = new GoogleGenAI({ apiKey });
+  const backoffMs = [10000, 20000, 30000, 60000, 90000];
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const res = await ai.models.generateContent({ model: MODEL, contents: prompt });
-      const text = res.text || "";
-      if (!text && attempt < retries) {
-        await sleep(3000 * attempt);
-        continue;
-      }
-      return text;
-    } catch (e: any) {
-      const msg = e.message || String(e);
-      const isRetryable =
-        msg.includes("503") ||
-        msg.includes("UNAVAILABLE") ||
-        msg.includes("429") ||
-        msg.includes("high demand") ||
-        msg.includes("RESOURCE_EXHAUSTED") ||
-        msg.includes("overloaded");
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+      });
+      return response.text || '';
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      const isRetryable = msg.includes('503') || msg.includes('UNAVAILABLE') ||
+        msg.includes('429') || msg.includes('overloaded') ||
+        msg.includes('RESOURCE_EXHAUSTED') || msg.includes('rate limit');
 
-      if (isRetryable && attempt < retries) {
-        const wait = 5000 * attempt;
-        await sleep(wait);
+      if (isRetryable && attempt < maxRetries) {
+        const wait = backoffMs[attempt] || 60000;
+        console.log(`⏳ Gemini ${msg.includes('503') ? '503' : '429'} — retry ${attempt + 1}/${maxRetries} in ${wait / 1000}s`);
+        await new Promise(r => setTimeout(r, wait));
         continue;
       }
-      throw e;
+      throw err;
     }
   }
-  throw new Error("Gemini API unavailable after 3 retries");
+  throw new Error('Gemini unavailable after all retries');
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+// ─── Dynamic module loaders ────────────────────────────────────────
+
+async function getGitHubClient() {
+  const mod = await import('./github-client.js');
+  const Cls = (mod as any).GitHubClient || (mod as any).GithubClient ||
+    (mod as any).GitHub || (mod as any).default ||
+    Object.values(mod).find((v: any) => typeof v === 'function');
+  return new (Cls as any)();
 }
 
-// ── Types ──────────────────────────────────────────────
-export interface Diagnosis {
-  diagnosis: string;
-  severity: "critical" | "high" | "medium" | "low";
-  root_cause: string;
-  files_to_fix: { path: string; reason: string }[];
-  confidence: number;
-}
+// ─── Analyze Issue ──────────────────────────────────────────────────
 
-export interface FileFix {
-  path: string;
-  content: string;
-  explanation: string;
-}
-
-// ── Analyze ────────────────────────────────────────────
-export async function analyzeError(
-  errorLog: string,
-  files: { path: string; content: string }[],
+export async function analyzeIssue(
+  owner: string,
+  repo: string,
   description: string
-): Promise<Diagnosis> {
-  const fileContext = files
-    .map((f) => `--- ${f.path} ---\n${f.content.slice(0, 4000)}`)
-    .join("\n\n");
+): Promise<string> {
+  const gh = await getGitHubClient();
 
-  const prompt = `You are a senior TypeScript/Node.js developer. Analyze this issue and return ONLY valid JSON.
-
-PROBLEM: ${description}
-
-ERROR LOG:
-${errorLog.slice(0, 3000)}
-
-RELEVANT FILES:
-${fileContext.slice(0, 12000)}
-
-Return JSON:
-{
-  "diagnosis": "brief description of the problem",
-  "severity": "critical|high|medium|low",
-  "root_cause": "detailed root cause explanation",
-  "files_to_fix": [{"path": "src/file.ts", "reason": "what needs changing"}],
-  "confidence": 85
-}`;
-
-  const text = await callGemini(prompt);
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Gemini returned no JSON");
-  return JSON.parse(jsonMatch[0]) as Diagnosis;
-}
-
-// ── Generate Fix ───────────────────────────────────────
-export async function generateFix(
-  diagnosis: Diagnosis,
-  files: { path: string; content: string; sha?: string }[]
-): Promise<FileFix[]> {
-  const fileContext = files
-    .map((f) => `--- ${f.path} ---\n${f.content}`)
-    .join("\n\n");
-
-  const prompt = `You are a senior TypeScript/Node.js developer. Fix the code based on this diagnosis. Return ONLY valid JSON.
-
-DIAGNOSIS: ${diagnosis.root_cause}
-FILES TO FIX: ${JSON.stringify(diagnosis.files_to_fix)}
-
-CURRENT FILE CONTENTS:
-${fileContext.slice(0, 15000)}
-
-IMPORTANT RULES:
-- Return the COMPLETE file content for each fixed file (not just diffs)
-- Preserve all existing functionality
-- Use ESM imports with .js extensions (this is a NodeNext project)
-- Do not add new dependencies unless absolutely necessary
-- Do not modify .env files or expose secrets
-
-Return JSON array:
-[
-  {
-    "path": "src/file.ts",
-    "content": "complete corrected file content here",
-    "explanation": "what was changed and why"
+  // Gather context: recent files, package.json, error logs
+  let context = '';
+  try {
+    const pkg = await gh.getFileContent(owner, repo, 'package.json');
+    context += `package.json:\n${pkg}\n\n`;
+  } catch {
+    context += 'package.json: not found\n\n';
   }
-]`;
-
-  const text = await callGemini(prompt);
-  const jsonMatch = text.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error("Gemini returned no fix JSON");
-  return JSON.parse(jsonMatch[0]) as FileFix[];
-}
-
-// ── Review ─────────────────────────────────────────────
-export async function reviewChanges(
-  originalFiles: { path: string; content: string }[],
-  fixedFiles: { path: string; content: string }[]
-): Promise<{ safe: boolean; issues: string[] }> {
-  const prompt = `Review these code changes for bugs, security issues, missing imports, broken references, or regressions. Return ONLY valid JSON.
-
-ORIGINAL:
-${originalFiles.map((f) => `--- ${f.path} ---\n${f.content.slice(0, 3000)}`).join("\n")}
-
-FIXED:
-${fixedFiles.map((f) => `--- ${f.path} ---\n${f.content.slice(0, 3000)}`).join("\n")}
-
-Return JSON:
-{
-  "safe": true,
-  "issues": ["list any problems found, empty if none"]
-}`;
 
   try {
-    const text = await callGemini(prompt, 2);
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { safe: true, issues: ["Could not parse review response"] };
-    return JSON.parse(jsonMatch[0]);
+    const tsconfig = await gh.getFileContent(owner, repo, 'tsconfig.json');
+    context += `tsconfig.json:\n${tsconfig}\n\n`;
   } catch {
-    // If review fails, allow the fix but flag it
-    return { safe: true, issues: ["⚠️ AI review skipped due to API overload. Review the PR manually."] };
+    // optional
+  }
+
+  // Check recent CI logs if available
+  try {
+    const token = process.env.GITHUB_TOKEN;
+    if (token) {
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=1&status=failure`,
+        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } }
+      );
+      if (res.ok) {
+        const data = await res.json() as any;
+        const runs = data.workflow_runs || [];
+        if (runs.length > 0) {
+          context += `Last failed CI run: ${runs[0].name} on ${runs[0].head_branch}\n`;
+          context += `URL: ${runs[0].html_url}\n\n`;
+        }
+      }
+    }
+  } catch {
+    // optional
+  }
+
+  const prompt = `You are an expert software engineer. Analyze this issue and provide a clear diagnosis.
+
+REPO: ${owner}/${repo}
+ISSUE: ${description}
+
+REPO CONTEXT:
+${context}
+
+Provide:
+1. Root cause analysis (what's wrong and why)
+2. Affected files
+3. Recommended fix (specific code changes)
+4. Confidence level (high/medium/low)
+
+Be concise and actionable.`;
+
+  return await callGemini(prompt);
+}
+
+// ─── Generate Fix ───────────────────────────────────────────────────
+
+export async function generateFix(
+  owner: string,
+  repo: string,
+  description: string
+): Promise<{ diagnosis: string; branch: string; files: Array<{ path: string; content: string }>; prTitle: string; prBody: string }> {
+  const gh = await getGitHubClient();
+
+  // Gather context
+  let context = '';
+  try {
+    const pkg = await gh.getFileContent(owner, repo, 'package.json');
+    context += `package.json:\n${pkg}\n\n`;
+  } catch {
+    context += 'package.json: not found\n\n';
+  }
+
+  try {
+    const tsconfig = await gh.getFileContent(owner, repo, 'tsconfig.json');
+    context += `tsconfig.json:\n${tsconfig}\n\n`;
+  } catch {
+    // optional
+  }
+
+  const prompt = `You are an expert software engineer. Generate a complete fix for this issue.
+
+REPO: ${owner}/${repo}
+ISSUE: ${description}
+
+REPO CONTEXT:
+${context}
+
+Respond in this EXACT JSON format (no markdown, no code blocks, just raw JSON):
+{
+  "diagnosis": "brief explanation of the problem",
+  "branch": "fix/description-kebab-case",
+  "files": [
+    {
+      "path": "relative/path/to/file.ts",
+      "content": "complete file content after fix"
+    }
+  ],
+  "prTitle": "fix: brief description",
+  "prBody": "## Problem\\n...\\n## Solution\\n..."
+}
+
+Rules:
+- Include ALL files that need changes
+- Provide COMPLETE file contents (not diffs)
+- Keep the branch name short and descriptive
+- Do not modify package-lock.json or node_modules`;
+
+  const raw = await callGemini(prompt);
+
+  // Parse JSON from response
+  try {
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON in response');
+    return JSON.parse(jsonMatch[0]);
+  } catch (e: any) {
+    return {
+      diagnosis: raw.slice(0, 500),
+      branch: `fix/auto-${Date.now()}`,
+      files: [],
+      prTitle: `fix: ${description.slice(0, 50)}`,
+      prBody: `Auto-generated fix attempt.\n\nDiagnosis:\n${raw.slice(0, 1000)}`,
+    };
   }
 }

@@ -39,15 +39,24 @@ async function callGemini(prompt: string): Promise<string> {
 // ─── Generate site name from description ────────────────────────────
 
 function generateSiteName(description: string): string {
-  // Extract key words from description to make a repo name
+  const stopWords = new Set([
+    'the', 'for', 'and', 'with', 'that', 'this', 'from', 'are', 'was',
+    'but', 'not', 'you', 'all', 'can', 'has', 'her', 'one', 'our', 'out',
+    'its', 'his', 'how', 'may', 'who', 'did', 'get', 'had', 'him', 'let',
+    'say', 'she', 'too', 'use', 'will', 'make', 'like', 'just', 'over',
+    'such', 'take', 'than', 'them', 'very', 'been', 'call', 'come', 'could',
+    'each', 'find', 'here', 'know', 'long', 'many', 'more', 'most', 'only',
+    'other', 'some', 'time', 'what', 'when', 'where', 'which', 'about',
+    'would', 'there', 'their', 'these', 'after', 'being', 'have', 'into',
+  ]);
+
   const words = description
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .split(/\s+/)
-    .filter(w => w.length > 2 && !['the', 'for', 'and', 'with', 'that', 'this', 'from', 'are', 'was', 'but', 'not', 'you', 'all', 'can', 'has', 'her', 'one', 'our', 'out', 'its', 'his', 'how', 'may', 'who', 'did', 'get', 'had', 'him', 'let', 'say', 'she', 'too', 'use', 'will', 'make', 'like', 'just', 'over', 'such', 'take', 'than', 'them', 'very', 'been', 'call', 'come', 'could', 'each', 'find', 'here', 'know', 'long', 'many', 'more', 'most', 'only', 'other', 'some', 'time', 'what', 'when', 'where', 'which', 'about', 'would', 'there', 'their', 'these', 'after', 'being', 'have', 'into'].includes(w));
+    .filter(w => w.length > 2 && !stopWords.has(w));
 
-  const name = words.slice(0, 3).join('-');
-  return name || 'my-site';
+  return words.slice(0, 3).join('-') || 'my-site';
 }
 
 // ─── Generate HTML via Gemini ───────────────────────────────────────
@@ -71,13 +80,11 @@ Respond with ONLY the complete HTML code. No explanations, no markdown code bloc
 
   const raw = await callGemini(prompt);
 
-  // Strip markdown code blocks if present
   let html = raw.trim();
   if (html.startsWith('```')) {
     html = html.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '');
   }
 
-  // Ensure it starts with <!DOCTYPE or <html
   if (!html.toLowerCase().startsWith('<!doctype') && !html.toLowerCase().startsWith('<html')) {
     const doctypeIdx = html.toLowerCase().indexOf('<!doctype');
     const htmlIdx = html.toLowerCase().indexOf('<html');
@@ -96,7 +103,6 @@ async function createGitHubRepo(repoName: string, htmlContent: string): Promise<
   const token = process.env.GITHUB_TOKEN;
   if (!token) throw new Error('GITHUB_TOKEN not set');
 
-  // Create repo
   const createRes = await fetch('https://api.github.com/user/repos', {
     method: 'POST',
     headers: {
@@ -106,25 +112,21 @@ async function createGitHubRepo(repoName: string, htmlContent: string): Promise<
     },
     body: JSON.stringify({
       name: repoName,
-      description: `Auto-generated site by XTOP Agent`,
+      description: 'Auto-generated site by XTOP Agent',
       private: false,
       auto_init: false,
     }),
   });
 
-  if (!createRes.ok) {
+  if (!createRes.ok && createRes.status !== 422) {
     const err = await createRes.json() as any;
-    // If repo already exists, that's fine
-    if (createRes.status !== 422) {
-      throw new Error(`GitHub repo creation failed: ${err?.message || createRes.status}`);
-    }
+    throw new Error(`GitHub repo creation failed: ${err?.message || createRes.status}`);
   }
 
   const repoData = await createRes.json() as any;
   const fullName = repoData?.full_name || repoName;
   const [owner, repo] = fullName.split('/');
 
-  // Create index.html via GitHub Contents API
   const contentBase64 = Buffer.from(htmlContent, 'utf-8').toString('base64');
 
   const fileRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/index.html`, {
@@ -149,71 +151,6 @@ async function createGitHubRepo(repoName: string, htmlContent: string): Promise<
   return fullName;
 }
 
-// ─── Deploy to Netlify ──────────────────────────────────────────────
-
-async function deployToNetlify(repoFullName: string, htmlContent: string): Promise<{ url: string; deployId: string }> {
-  const token = process.env.NETLIFY_AUTH_TOKEN;
-  if (!token) throw new Error('NETLIFY_AUTH_TOKEN not set');
-
-  const siteName = repoFullName.replace('/', '-').toLowerCase();
-
-  // Create site on Netlify
-  const siteRes = await fetch('https://api.netlify.com/api/v1/sites', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      name: siteName,
-    }),
-  });
-
-  if (!siteRes.ok) {
-    const err = await siteRes.json() as any;
-    throw new Error(`Netlify site creation failed: ${err?.message || siteRes.status}`);
-  }
-
-  const siteData = await siteRes.json() as any;
-  const siteId = siteData.id;
-
-  // Deploy the HTML file
-  const deployRes = await fetch(`https://api.netlify.com/api/v1/sites/${siteId}/deploys`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/zip',
-    },
-    body: await createZipBuffer(htmlContent),
-  });
-
-  if (!deployRes.ok) {
-    const err = await deployRes.json() as any;
-    throw new Error(`Netlify deploy failed: ${err?.message || deployRes.status}`);
-  }
-
-  const deployData = await deployRes.json() as any;
-
-  return {
-    url: deployData?.ssl_url || deployData?.url || siteData?.ssl_url || siteData?.url || `https://${siteName}.netlify.app`,
-    deployId: deployData?.id || 'ok',
-  };
-}
-
-// ─── Create minimal ZIP for Netlify deploy ──────────────────────────
-
-async function createZipBuffer(htmlContent: string): Promise<Buffer> {
-  // Netlify accepts file digests for deploys, but the simplest approach
-  // is to use the file-based deploy API with a JSON manifest
-  // We'll use the "files" deploy method instead
-
-  // Actually, for simplicity, use Netlify's file digest deploy
-  const crypto = await import('crypto');
-  const sha1 = crypto.createHash('sha1').update(htmlContent).digest('hex');
-
-  return Buffer.from(htmlContent); // placeholder — we'll use the digest API
-}
-
 // ─── Main Build Function ────────────────────────────────────────────
 
 export async function buildSite(
@@ -228,7 +165,7 @@ export async function buildSite(
   const siteName = generateSiteName(description);
   const repoName = `${siteName}-${Date.now().toString(36)}`;
 
-  console.log(`🏗 Building site: ${repoName} from description: "${description.slice(0, 50)}..."`);
+  console.log(`🏗 Building site: ${repoName} from: "${description.slice(0, 50)}..."`);
 
   // Step 1: Generate HTML
   console.log('📝 Generating HTML with Gemini...');
@@ -246,11 +183,10 @@ export async function buildSite(
     repoFullName = `github-failed/${repoName}`;
   }
 
-  // Step 3: Deploy to Netlify
+  // Step 3: Deploy to Netlify (file digest API)
   console.log('🚀 Deploying to Netlify...');
   let deployUrl = '';
   try {
-    // Use Netlify's file-based deploy (simpler than ZIP)
     const token = process.env.NETLIFY_AUTH_TOKEN;
     if (!token) throw new Error('NETLIFY_AUTH_TOKEN not set');
 
@@ -326,6 +262,6 @@ export async function buildSite(
   return {
     url: deployUrl,
     repo: repoFullName,
-    deployUrl: deployUrl,
+    deployUrl,
   };
 }

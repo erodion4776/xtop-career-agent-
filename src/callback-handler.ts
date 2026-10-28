@@ -10,20 +10,141 @@ async function getSupabase() {
   return typeof fn === 'function' ? fn() : fn;
 }
 
-async function getGitHubClient() {
-  const mod = await import('./github-client.js');
-  const Cls = (mod as any).GitHubClient || (mod as any).GithubClient ||
-    (mod as any).GitHub || (mod as any).default ||
-    Object.values(mod).find((v: any) => typeof v === 'function');
-  return new (Cls as any)();
+async function getGitHubClient(): Promise<any> {
+  try {
+    const mod = await import('./github-client.js');
+    for (const key of Object.keys(mod)) {
+      const val = (mod as any)[key];
+      if (typeof val === 'function') {
+        try {
+          const instance = new val();
+          if (instance.listRepos || instance.getRepos || instance.repos) return instance;
+        } catch {
+          try {
+            const instance = val();
+            if (instance && typeof instance === 'object') return instance;
+          } catch { /* skip */ }
+        }
+      }
+      if (typeof val === 'object' && val !== null && (val.listRepos || val.getRepos)) return val;
+    }
+    if (mod.default) {
+      if (typeof mod.default === 'function') {
+        try { return new (mod.default as any)(); } catch {
+          try { return (mod.default as any)(); } catch { /* skip */ }
+        }
+      }
+      if (typeof mod.default === 'object') return mod.default;
+    }
+  } catch { /* module load failed */ }
+
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) throw new Error('GITHUB_TOKEN not set');
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github+json',
+  };
+
+  return {
+    isConfigured: () => true,
+
+    async listRepos(page = 0, perPage = 10) {
+      const res = await fetch(`https://api.github.com/user/repos?per_page=${perPage}&page=${page + 1}&sort=updated`, { headers });
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      const repos = await res.json();
+      return { repos, totalPages: Math.ceil(100 / perPage) };
+    },
+
+    async listContents(owner: string, repo: string, path: string) {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { headers });
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      return await res.json();
+    },
+
+    async getFileContent(owner: string, repo: string, path: string) {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+        headers: { ...headers, Accept: 'application/vnd.github.raw+json' },
+      });
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      return await res.text();
+    },
+
+    async listIssues(owner: string, repo: string, page = 0) {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=5&page=${page + 1}`, { headers });
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      return await res.json();
+    },
+
+    async listCommits(owner: string, repo: string, page = 0) {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=5&page=${page + 1}`, { headers });
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      return await res.json();
+    },
+
+    async listPRs(owner: string, repo: string, page = 0) {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=5&page=${page + 1}`, { headers });
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      return await res.json();
+    },
+  };
 }
 
-async function getNetlifyClient() {
-  const mod = await import('./netlify-client.js');
-  const Cls = (mod as any).NetlifyClient || (mod as any).Netlify ||
-    (mod as any).default ||
-    Object.values(mod).find((v: any) => typeof v === 'function');
-  return new (Cls as any)();
+async function getNetlifyClient(): Promise<any> {
+  try {
+    const mod = await import('./netlify-client.js');
+    for (const key of Object.keys(mod)) {
+      const val = (mod as any)[key];
+      if (typeof val === 'function') {
+        try {
+          const instance = new val();
+          if (instance.listSites || instance.getSites) return instance;
+        } catch {
+          try {
+            const instance = val();
+            if (instance && typeof instance === 'object') return instance;
+          } catch { /* skip */ }
+        }
+      }
+      if (typeof val === 'object' && val !== null && (val.listSites || val.getSites)) return val;
+    }
+    if (mod.default) {
+      if (typeof mod.default === 'function') {
+        try { return new (mod.default as any)(); } catch {
+          try { return (mod.default as any)(); } catch { /* skip */ }
+        }
+      }
+      if (typeof mod.default === 'object') return mod.default;
+    }
+  } catch { /* module load failed */ }
+
+  const token = process.env.NETLIFY_AUTH_TOKEN;
+  if (!token) throw new Error('NETLIFY_AUTH_TOKEN not set');
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+
+  return {
+    isConfigured: () => true,
+
+    async listSites(page = 0, perPage = 10) {
+      const res = await fetch(`https://api.netlify.com/api/v1/sites?per_page=${perPage}&page=${page + 1}`, { headers });
+      if (!res.ok) throw new Error(`Netlify API ${res.status}`);
+      const sites = await res.json();
+      return { sites, totalPages: Math.ceil(100 / perPage) };
+    },
+
+    async triggerDeploy(siteId: string) {
+      const res = await fetch(`https://api.netlify.com/api/v1/sites/${siteId}/deploys`, {
+        method: 'POST',
+        headers,
+      });
+      if (!res.ok) throw new Error(`Netlify API ${res.status}`);
+      return await res.json();
+    },
+  };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -288,8 +409,13 @@ async function handleGitHubRepos(chatId: number, msgId: number, args: string) {
   let gh: any;
   try {
     gh = await getGitHubClient();
-  } catch {
-    await editMenu(chatId, msgId, '❌ GitHub not configured.\nSet GITHUB_TOKEN.', [[btn('⬅️ Back', 'm:dev')]]);
+  } catch (e: any) {
+    const hasToken = !!process.env.GITHUB_TOKEN;
+    const errMsg = e?.message || String(e);
+    await editMenu(chatId, msgId,
+      `❌ *GitHub Error*\n\nToken set: ${hasToken ? '✅' : '❌'}\nError: ${errMsg.slice(0, 200)}`,
+      [[btn('⬅️ Back', 'm:dev')]]
+    );
     return;
   }
 
@@ -624,245 +750,4 @@ async function handleNetlifyDeploy(chatId: number, msgId: number, siteId: string
       [[btn('🌐 Sites', 'nl:0'), btn('⬅️ Back', 'm:dev')]]
     );
   } catch (err: any) {
-    await editMenu(chatId, msgId, `❌ Deploy failed: ${err.message}`, [
-      [btn('⬅️ Back', 'nl:0')],
-    ]);
-  }
-}
-
-// ─── CRM Prospects ──────────────────────────────────────────────────
-
-async function handleCRMList(chatId: number, msgId: number, args: string) {
-  const page = parseInt(args) || 0;
-  const perPage = 5;
-  const sb = await getSupabase();
-
-  try {
-    const { data, count } = await sb
-      .from('prospects')
-      .select('id, name, company, status', { count: 'exact' })
-      .range(page * perPage, (page + 1) * perPage - 1)
-      .order('created_at', { ascending: false });
-
-    const prospects: any[] = (data as any[]) || [];
-    const totalPages = Math.ceil((count || 0) / perPage) || 1;
-
-    if (prospects.length === 0) {
-      await editMenu(chatId, msgId, '👥 *Prospects*\n\nNo prospects yet.\nUse `/addprospect` to add.', [
-        [btn('⬅️ Back', 'm:crm')],
-      ]);
-      return;
-    }
-
-    const text = `👥 *Prospects* (${page + 1}/${totalPages})\n\n` +
-      prospects.map((p: any) =>
-        `${p.status === 'contacted' ? '📧' : p.status === 'replied' ? '💬' : '🆕'} *${p.name}*\n${p.company || '—'} • ${p.status}`
-      ).join('\n\n');
-
-    const rows: any[][] = prospects.map((p: any) => [
-      btn('✅', safeData('ca', String(p.id), 'contacted')),
-      btn('💬', safeData('ca', String(p.id), 'replied')),
-      btn('🎉', safeData('ca', String(p.id), 'won')),
-    ]);
-
-    if (totalPages > 1) rows.push(paginationRow('cr', page, totalPages));
-    rows.push([btn('⬅️ Back', 'm:crm')]);
-
-    await editMenu(chatId, msgId, truncate(text), rows);
-  } catch (err: any) {
-    await editMenu(chatId, msgId, `❌ ${err.message}`, [[btn('⬅️ Back', 'm:crm')]]);
-  }
-}
-
-// ─── CRM Action ─────────────────────────────────────────────────────
-
-async function handleCRMAction(chatId: number, msgId: number, args: string, cbId: string) {
-  const parts = args.split(':');
-  if (parts.length < 2) return;
-  const prospectId = parts[0];
-  const newStatus = parts[1];
-  const sb = await getSupabase();
-
-  try {
-    await sb.from('prospects').update({ status: newStatus }).eq('id', prospectId);
-    await answerCallbackQuery(cbId, `✅ Status → ${newStatus}`).catch(() => {});
-    await handleCRMList(chatId, msgId, '0');
-  } catch (err: any) {
-    await answerCallbackQuery(cbId, `❌ ${err.message}`).catch(() => {});
-  }
-}
-
-// ─── Outreach Drafts ────────────────────────────────────────────────
-
-async function handleOutreachList(chatId: number, msgId: number, args: string) {
-  const page = parseInt(args) || 0;
-  const sb = await getSupabase();
-
-  try {
-    const { data } = await sb
-      .from('outreach')
-      .select('id, prospect_name, status, created_at')
-      .eq('status', 'draft')
-      .order('created_at', { ascending: false })
-      .range(page * 5, (page + 1) * 5 - 1);
-
-    const drafts: any[] = (data as any[]) || [];
-
-    if (drafts.length === 0) {
-      await editMenu(chatId, msgId, '📝 *Drafts*\n\nNo drafts.\nUse `/draft` to create.', [
-        [btn('⬅️ Back', 'm:outreach')],
-      ]);
-      return;
-    }
-
-    const text = `📝 *Drafts*\n\n` + drafts.map((d: any) =>
-      `📧 ${d.prospect_name || 'Unknown'}\n_${d.created_at}_`
-    ).join('\n\n');
-
-    await editMenu(chatId, msgId, truncate(text), [
-      [btn('⬅️ Back', 'm:outreach')],
-    ]);
-  } catch (err: any) {
-    await editMenu(chatId, msgId, `❌ ${err.message}`, [[btn('⬅️ Back', 'm:outreach')]]);
-  }
-}
-
-// ─── Deploy Menu ────────────────────────────────────────────────────
-
-async function handleDeploy(chatId: number, msgId: number, args: string, cbId: string) {
-  if (args === 'menu') {
-    await editMenu(chatId, msgId, '🚀 *Deploy*', [
-      [btn('▲ Render', 'dp:render'), btn('🌐 Netlify', 'dp:netlify')],
-      [btn('⬅️ Back', 'm:main')],
-    ]);
-    return;
-  }
-
-  if (args === 'render') {
-    if (!process.env.RENDER_API_KEY) {
-      await editMenu(chatId, msgId, '❌ Render not configured.\nSet RENDER_API_KEY + RENDER_SERVICE_ID.', [
-        [btn('⬅️ Back', 'dp:menu')],
-      ]);
-      return;
-    }
-    await editMenu(chatId, msgId, '▲ *Deploy to Render?*\n\nThis will trigger a new deploy.', [
-      [btn('✅ Confirm', 'cf:deploy:render'), btn('❌ Cancel', 'dp:menu')],
-    ]);
-    return;
-  }
-
-  if (args === 'netlify') {
-    await handleNetlifyList(chatId, msgId, '0');
-    return;
-  }
-}
-
-// ─── New Site Builder ───────────────────────────────────────────────
-
-async function handleNewSite(chatId: number, msgId: number, args: string, cbId: string, userId: number) {
-  if (args === 'start') {
-    await setSession(chatId, userId, 'newsite', { step: 'describe' });
-    await editMenu(chatId, msgId,
-      '🆕 *New Site Builder*\n\nSend a message describing the site:\n\n' +
-      '_Example:_\n"A portfolio for a photographer"\n\n' +
-      'I will:\n1. Generate HTML\n2. Create GitHub repo\n3. Deploy to Netlify',
-      [[btn('⬅️ Back', 'm:dev')]]
-    );
-    return;
-  }
-}
-
-// ─── Watch CI ───────────────────────────────────────────────────────
-
-async function handleWatchCI(chatId: number, msgId: number, args: string, cbId: string) {
-  const repoFullName = args;
-  const [owner, repo] = repoFullName.split('/');
-
-  if (!owner || !repo) {
-    await editMenu(chatId, msgId, '❌ Invalid repo.\nUse `/watch owner/repo`', [
-      [btn('⬅️ Back', 'm:dev')],
-    ]);
-    return;
-  }
-
-  try {
-    await editMenu(chatId, msgId, `👁 *Checking CI for ${repoFullName}…*`, []);
-
-    const token = process.env.GITHUB_TOKEN;
-    if (!token) throw new Error('GITHUB_TOKEN not set');
-
-    const res = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=3`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } }
-    );
-
-    if (!res.ok) {
-      await editMenu(chatId, msgId,
-        `⚠️ *CI: ${repoFullName}*\n\nNo GitHub Actions or API error (${res.status}).`,
-        [[btn('⬅️ Back', safeData('ga', repoFullName, 'menu'))]]
-      );
-      return;
-    }
-
-    const data = await res.json() as any;
-    const runs: any[] = data.workflow_runs || [];
-
-    if (runs.length === 0) {
-      await editMenu(chatId, msgId,
-        `⚠️ *CI: ${repoFullName}*\n\nNo workflow runs.\nAdd \`.github/workflows/\` to enable.`,
-        [[btn('⬅️ Back', safeData('ga', repoFullName, 'menu'))]]
-      );
-      return;
-    }
-
-    const text = `👁 *CI: ${repoFullName}*\n\n` + runs.map((r: any) => {
-      const icon = r.conclusion === 'success' ? '✅' : r.conclusion === 'failure' ? '❌' : r.status === 'in_progress' ? '🔄' : '⏳';
-      return `${icon} *${r.name}*\n${r.head_branch} • ${r.conclusion || r.status}\n_${r.created_at}_`;
-    }).join('\n\n');
-
-    const failedRun = runs.find((r: any) => r.conclusion === 'failure');
-    const rows: any[][] = [[btn('⬅️ Back', safeData('ga', repoFullName, 'menu'))]];
-    if (failedRun) rows.unshift([btn('🔧 Auto-fix', safeData('ga', repoFullName, 'fix'))]);
-
-    await editMenu(chatId, msgId, truncate(text), rows);
-  } catch (err: any) {
-    await editMenu(chatId, msgId, `❌ ${err.message}`, [
-      [btn('⬅️ Back', safeData('ga', repoFullName, 'menu'))],
-    ]);
-  }
-}
-
-// ─── Confirm Actions ────────────────────────────────────────────────
-
-async function handleConfirm(chatId: number, msgId: number, args: string, cbId: string) {
-  const parts = args.split(':');
-  const action = parts[0];
-  const target = parts.slice(1).join(':');
-
-  if (action === 'deploy' && target === 'render') {
-    try {
-      await editMenu(chatId, msgId, '▲ *Deploying to Render…*', []);
-      const serviceId = process.env.RENDER_SERVICE_ID;
-      const apiKey = process.env.RENDER_API_KEY;
-      if (!serviceId || !apiKey) throw new Error('RENDER_SERVICE_ID or RENDER_API_KEY not set');
-
-      const res = await fetch(`https://api.render.com/v1/services/${serviceId}/deploys`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
-      });
-      const deploy = await res.json() as any;
-
-      await editMenu(chatId, msgId,
-        `✅ *Render deploy triggered!*\n\nID: \`${deploy?.id || 'ok'}\``,
-        [[btn('🚀 Deploy', 'dp:menu'), btn('⬅️ Home', 'm:main')]]
-      );
-    } catch (err: any) {
-      await editMenu(chatId, msgId, `❌ Deploy failed: ${err.message}`, [
-        [btn('⬅️ Back', 'dp:menu')],
-      ]);
-    }
-    return;
-  }
-
-  await editMenu(chatId, msgId, '✅ Action confirmed.', [[btn('⬅️ Home', 'm:main')]]);
-}
+    await editMenu(chatId, 

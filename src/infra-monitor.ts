@@ -1,318 +1,118 @@
 import { supabase } from "./supabase.js";
 
-// ── GITHUB ──────────────────────────────────────
-
-interface GitHubRepo {
-  name: string;
-  fullName: string;
-  defaultBranch: string;
-  openIssues: number;
-  updatedAt: string;
-  private: boolean;
-}
-
-interface GitHubCommit {
-  sha: string;
-  message: string;
-  author: string;
-  date: string;
-}
-
 const GITHUB_API = "https://api.github.com";
-
-function githubHeaders(): Record<string, string> {
-  const token = process.env.GITHUB_TOKEN?.trim();
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github+json",
-    "User-Agent": "XTOP-Retail-Workforce/1.0",
-  };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  return headers;
-}
-
-export async function getRepoInfo(
-  owner: string,
-  repo: string
-): Promise<GitHubRepo> {
-  const res = await fetch(
-    `${GITHUB_API}/repos/${owner}/${repo}`,
-    { headers: githubHeaders() }
-  );
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(
-      `GitHub API ${res.status}: ${text.slice(0, 200)}`
-    );
-  }
-
-  const data = (await res.json()) as Record<string, unknown>;
-
-  return {
-    name: String(data.name || repo),
-    fullName: String(data.full_name || `${owner}/${repo}`),
-    defaultBranch: String(data.default_branch || "main"),
-    openIssues: Number(data.open_issues_count || 0),
-    updatedAt: String(data.updated_at || ""),
-    private: Boolean(data.private),
-  };
-}
-
-export async function getRecentCommits(
-  owner: string,
-  repo: string,
-  limit = 5
-): Promise<GitHubCommit[]> {
-  const res = await fetch(
-    `${GITHUB_API}/repos/${owner}/${repo}/commits?per_page=${limit}`,
-    { headers: githubHeaders() }
-  );
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(
-      `GitHub API ${res.status}: ${text.slice(0, 200)}`
-    );
-  }
-
-  const data = (await res.json()) as Array<Record<string, unknown>>;
-
-  return data.map((c) => {
-    const commit = c.commit as Record<string, unknown> | undefined;
-    const author = commit?.author as Record<string, unknown> | undefined;
-
-    return {
-      sha: String(c.sha || "").slice(0, 7),
-      message: String(commit?.message || "").split("\n")[0].slice(0, 100),
-      author: String(author?.name || "unknown"),
-      date: String(author?.date || ""),
-    };
-  });
-}
-
-// ── RENDER ──────────────────────────────────────
-
-interface RenderService {
-  id: string;
-  name: string;
-  type: string;
-  status: string;
-  updatedAt: string;
-}
-
-interface RenderDeploy {
-  id: string;
-  status: string;
-  createdAt: string;
-  commitId: string;
-}
-
 const RENDER_API = "https://api.render.com/v1";
+const REPO = "erodion4776/xtop-career-agent-";
+const SERVICE_ID = process.env.RENDER_SERVICE_ID || "srv-dbf6gi0ae00c73ev0l9g";
 
-function renderHeaders(): Record<string, string> {
-  const key = process.env.RENDER_API_KEY?.trim();
-  if (!key) {
-    throw new Error("RENDER_API_KEY not configured.");
-  }
-  return {
-    Accept: "application/json",
-    Authorization: `Bearer ${key}`,
-  };
-}
-
-export async function getRenderService(
-  serviceId: string
-): Promise<RenderService> {
-  const res = await fetch(
-    `${RENDER_API}/services/${serviceId}`,
-    { headers: renderHeaders() }
-  );
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(
-      `Render API ${res.status}: ${text.slice(0, 200)}`
-    );
-  }
-
-  const data = (await res.json()) as Record<string, unknown>;
-  const svc = data.service as Record<string, unknown> | undefined;
-
-  return {
-    id: String(svc?.id || serviceId),
-    name: String(svc?.name || "unknown"),
-    type: String(svc?.type || "unknown"),
-    status: String(svc?.serviceDetails?.status || data.status || "unknown"),
-    updatedAt: String(svc?.updatedAt || ""),
-  };
-}
-
-export async function getRenderDeploys(
-  serviceId: string,
-  limit = 3
-): Promise<RenderDeploy[]> {
-  const res = await fetch(
-    `${RENDER_API}/services/${serviceId}/deploys?limit=${limit}`,
-    { headers: renderHeaders() }
-  );
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(
-      `Render API ${res.status}: ${text.slice(0, 200)}`
-    );
-  }
-
-  const data = (await res.json()) as Array<Record<string, unknown>>;
-
-  return data.map((d) => {
-    const deploy = d.deploy as Record<string, unknown> | undefined;
-    return {
-      id: String(deploy?.id || d.id || "").slice(0, 12),
-      status: String(deploy?.status || "unknown"),
-      createdAt: String(deploy?.createdAt || ""),
-      commitId: String(deploy?.commit?.id || "").slice(0, 7),
-    };
+async function ghFetch(path: string): Promise<any> {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) return null;
+  const res = await fetch(`${GITHUB_API}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "xtop-agent",
+    },
   });
+  if (!res.ok) return null;
+  return res.json();
 }
 
-// ── SUPABASE ────────────────────────────────────
-
-interface TableStats {
-  table: string;
-  count: number;
+async function renderFetch(path: string): Promise<any> {
+  const token = process.env.RENDER_API_KEY;
+  if (!token) return null;
+  const res = await fetch(`${RENDER_API}${path}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  if (!res.ok) return null;
+  return res.json();
 }
 
-export async function getSupabaseHealth(): Promise<{
-  connected: boolean;
-  tables: TableStats[];
-  error?: string;
-}> {
-  const tablesToCheck = [
-    "job_leads",
-    "gmail_connections",
-    "tasks",
-    "audit_log",
-    "prospects",
-    "outreach",
+// ── GitHub Health ──────────────────────────────────────
+export async function getGithubHealth(): Promise<string> {
+  const repo = await ghFetch(`/repos/${REPO}`);
+  if (!repo) return "⚠️ GitHub: Cannot access repo. Check GITHUB_TOKEN.";
+
+  const commits = await ghFetch(`/repos/${REPO}/commits?per_page=1`);
+  const issues = await ghFetch(`/repos/${REPO}/issues?state=open&per_page=1`);
+
+  const lastPush = repo.pushed_at ? new Date(repo.pushed_at).toLocaleDateString() : "unknown";
+  const lastCommit = commits?.[0]?.commit?.message?.split("\n")[0] || "none";
+  const openIssues = Array.isArray(issues) ? issues.length : "?";
+
+  return [
+    "🐙 *GitHub Health*",
+    "",
+    `Repo: ${REPO}`,
+    `Stars: ${repo.stargazers_count || 0}`,
+    `Open Issues: ${openIssues}`,
+    `Last Push: ${lastPush}`,
+    `Last Commit: ${lastCommit.slice(0, 60)}`,
+    `Default Branch: ${repo.default_branch || "main"}`,
+  ].join("\n");
+}
+
+// ── Render Status ──────────────────────────────────────
+export async function getRenderStatus(): Promise<string> {
+  const svc = await renderFetch(`/services/${SERVICE_ID}`);
+  if (!svc) return "⚠️ Render: Cannot access service. Check RENDER_API_KEY.";
+
+  const svcData = svc as any;
+  const deploys = await renderFetch(`/services/${SERVICE_ID}/deploys?limit=3`);
+
+  const lines = [
+    "🖥️ *Render Status*",
+    "",
+    `Service: ${svcData.name || SERVICE_ID}`,
+    `Type: ${svcData.type || "web"}`,
+    `Status: ${svcData.serviceDetails?.status || svcData.status || "unknown"}`,
+    `Region: ${svcData.serviceDetails?.region || "unknown"}`,
   ];
 
-  const tables: TableStats[] = [];
-
-  try {
-    // Quick connectivity test
-    const { error: pingErr } = await supabase
-      .from("job_leads")
-      .select("id", { count: "exact", head: true })
-      .limit(1);
-
-    if (pingErr) {
-      return { connected: false, tables: [], error: pingErr.message };
+  if (Array.isArray(deploys)) {
+    lines.push("", "*Recent Deploys:*");
+    for (const d of deploys.slice(0, 3)) {
+      const dd = d as any;
+      const deploy = dd.deploy || dd;
+      const status = deploy.status || "unknown";
+      const icon = status === "live" ? "✅" : status === "build_failed" ? "❌" : "⏳";
+      lines.push(`  ${icon} ${status} — ${deploy.createdAt?.slice(0, 16) || "?"}`);
     }
-
-    // Count rows in each table
-    for (const table of tablesToCheck) {
-      try {
-        const { count, error } = await supabase
-          .from(table)
-          .select("*", { count: "exact", head: true });
-
-        if (error) {
-          tables.push({ table, count: -1 });
-        } else {
-          tables.push({ table, count: count ?? 0 });
-        }
-      } catch {
-        tables.push({ table, count: -1 });
-      }
-    }
-
-    return { connected: true, tables };
-  } catch (error) {
-    return {
-      connected: false,
-      tables: [],
-      error: error instanceof Error ? error.message : String(error),
-    };
   }
+
+  return lines.join("\n");
 }
 
-// ── COMBINED STATUS ─────────────────────────────
+// ── DB Stats ───────────────────────────────────────────
+export async function getDbStats(): Promise<string> {
+  const tables = ["job_leads", "tasks", "prospects", "outreach", "audit_log", "gmail_connections"];
+  const lines = ["🗄️ *Database Stats*", ""];
 
-export async function getFullInfraStatus(): Promise<{
-  github: { ok: boolean; message: string };
-  render: { ok: boolean; message: string };
-  supabase: { ok: boolean; message: string };
-}> {
-  const result = {
-    github: { ok: false, message: "Not checked" },
-    render: { ok: false, message: "Not checked" },
-    supabase: { ok: false, message: "Not checked" },
-  };
-
-  // GitHub
-  try {
-    const token = process.env.GITHUB_TOKEN?.trim();
-    if (!token) {
-      result.github = { ok: false, message: "GITHUB_TOKEN not set" };
-    } else {
-      const repo = await getRepoInfo("erodion4776", "xtop-career-agent-");
-      result.github = {
-        ok: true,
-        message: `${repo.fullName} — ${repo.openIssues} open issues, updated ${repo.updatedAt.slice(0, 10)}`,
-      };
+  for (const table of tables) {
+    try {
+      const { count, error } = await supabase
+        .from(table)
+        .select("id", { count: "exact", head: true });
+      if (error) {
+        lines.push(`  ${table}: ⚠️ ${error.message.slice(0, 40)}`);
+      } else {
+        lines.push(`  ${table}: ${count || 0} rows`);
+      }
+    } catch (e: any) {
+      lines.push(`  ${table}: ❌ ${e.message?.slice(0, 40) || "error"}`);
     }
-  } catch (error) {
-    result.github = {
-      ok: false,
-      message: error instanceof Error ? error.message.slice(0, 100) : "Error",
-    };
   }
 
-  // Render
-  try {
-    const key = process.env.RENDER_API_KEY?.trim();
-    if (!key) {
-      result.render = { ok: false, message: "RENDER_API_KEY not set" };
-    } else {
-      const svc = await getRenderService("srv-dbf6gi0ae00c73ev0l9g");
-      result.render = {
-        ok: svc.status === "live" || svc.status === "available",
-        message: `${svc.name} — status: ${svc.status}`,
-      };
-    }
-  } catch (error) {
-    result.render = {
-      ok: false,
-      message: error instanceof Error ? error.message.slice(0, 100) : "Error",
-    };
-  }
+  return lines.join("\n");
+}
 
-  // Supabase
-  try {
-    const health = await getSupabaseHealth();
-    if (health.connected) {
-      const totalRows = health.tables
-        .filter((t) => t.count >= 0)
-        .reduce((sum, t) => sum + t.count, 0);
-      result.supabase = {
-        ok: true,
-        message: `Connected — ${health.tables.length} tables, ${totalRows} total rows`,
-      };
-    } else {
-      result.supabase = {
-        ok: false,
-        message: health.error || "Connection failed",
-      };
-    }
-  } catch (error) {
-    result.supabase = {
-      ok: false,
-      message: error instanceof Error ? error.message.slice(0, 100) : "Error",
-    };
-  }
-
-  return result;
+// ── Full Report ────────────────────────────────────────
+export async function getInfraReport(): Promise<string> {
+  const [gh, render, db] = await Promise.all([
+    getGithubHealth(),
+    getRenderStatus(),
+    getDbStats(),
+  ]);
+  return `🔧 *Infrastructure Report*\n${"─".repeat(20)}\n\n${gh}\n\n${render}\n\n${db}`;
 }

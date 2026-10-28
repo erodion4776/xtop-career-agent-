@@ -16,7 +16,6 @@ import {
   getCrmStats,
   searchProspects,
 } from "./crm.js";
-import { supabase } from "./supabase.js";
 import {
   generateDraft,
   listDrafts,
@@ -27,6 +26,7 @@ import {
   getProspectWithHistory,
   changeProspectStatus,
 } from "./outreach-engine.js";
+import { supabase } from "./supabase.js";
 
 /** Track processed update IDs to avoid duplicates. */
 const processed = new Set<number>();
@@ -389,7 +389,7 @@ async function routeCommand(
           email ? `Email: ${escapeMd(email)}` : "",
           phone ? `Phone: ${escapeMd(phone)}` : "",
           "",
-          "Next: `/draft " + escapeMd(prospect.business_name) + "`",
+          `Next: /draft ${escapeMd(prospect.business_name)}`,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -703,17 +703,20 @@ async function routeCommand(
     }
 
     try {
-      // Find the draft by ID prefix
       const { data: drafts, error } = await supabase
         .from("outreach")
         .select("id, subject, status")
-        .like("id", `${idPrefix}%`)
         .eq("status", "draft")
-        .limit(1);
+        .order("created_at", { ascending: false })
+        .limit(20);
 
-      if (error) throw error;
+      if (error) throw new Error(error.message);
 
-      if (!drafts || drafts.length === 0) {
+      const match = (drafts || []).find((d) =>
+        d.id.startsWith(idPrefix)
+      );
+
+      if (!match) {
         await sendMessage(
           chatId,
           `🔍 No draft found with ID starting with "${escapeMd(idPrefix)}". Check /outreach.`
@@ -721,23 +724,22 @@ async function routeCommand(
         return;
       }
 
-      const draftId = drafts[0].id;
-      await approveDraft(draftId);
+      await approveDraft(match.id);
 
       await sendMessage(
         chatId,
         [
-          `✅ Draft approved.`,
-          `Subject: ${escapeMd(drafts[0].subject || "(none)")}`,
+          "✅ Draft approved.",
+          `Subject: ${escapeMd(match.subject || "(none)")}`,
           "",
           `Send it with: /send ${idPrefix}`,
         ].join("\n"),
         { parseMode: "Markdown" }
       );
 
-      await logAction("draft_approved", { draftId });
+      await logAction("draft_approved", { draftId: match.id });
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
+      const msg = error instanceof Error ? error.message : String(error);
       await sendMessage(chatId, `❌ Approve error: ${escapeMd(msg)}`);
     }
     return;
@@ -756,14 +758,18 @@ async function routeCommand(
     try {
       const { data: drafts, error } = await supabase
         .from("outreach")
-        .select("id, subject")
-        .like("id", `${idPrefix}%`)
+        .select("id, subject, status")
         .in("status", ["draft", "approved"])
-        .limit(1);
+        .order("created_at", { ascending: false })
+        .limit(20);
 
-      if (error) throw error;
+      if (error) throw new Error(error.message);
 
-      if (!drafts || drafts.length === 0) {
+      const match = (drafts || []).find((d) =>
+        d.id.startsWith(idPrefix)
+      );
+
+      if (!match) {
         await sendMessage(
           chatId,
           `🔍 No active draft found with ID "${escapeMd(idPrefix)}".`
@@ -771,17 +777,17 @@ async function routeCommand(
         return;
       }
 
-      await rejectDraft(drafts[0].id);
+      await rejectDraft(match.id);
 
       await sendMessage(
         chatId,
-        `❌ Draft rejected: "${escapeMd(drafts[0].subject || "(none)")}".`,
+        `❌ Draft rejected: "${escapeMd(match.subject || "(none)")}".`,
         { parseMode: "Markdown" }
       );
 
-      await logAction("draft_rejected", { draftId: drafts[0].id });
+      await logAction("draft_rejected", { draftId: match.id });
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
+      const msg = error instanceof Error ? error.message : String(error);
       await sendMessage(chatId, `❌ Reject error: ${escapeMd(msg)}`);
     }
     return;
@@ -800,17 +806,20 @@ async function routeCommand(
     await sendMessage(chatId, "⏳ Sending email...");
 
     try {
-      // Find the approved draft by ID prefix
       const { data: drafts, error } = await supabase
         .from("outreach")
         .select("id")
-        .like("id", `${idPrefix}%`)
         .eq("status", "approved")
-        .limit(1);
+        .order("created_at", { ascending: false })
+        .limit(20);
 
-      if (error) throw error;
+      if (error) throw new Error(error.message);
 
-      if (!drafts || drafts.length === 0) {
+      const match = (drafts || []).find((d) =>
+        d.id.startsWith(idPrefix)
+      );
+
+      if (!match) {
         await sendMessage(
           chatId,
           `🔍 No approved draft found with ID "${escapeMd(idPrefix)}". Approve it first with /approve.`
@@ -818,7 +827,7 @@ async function routeCommand(
         return;
       }
 
-      const result = await sendDraft(drafts[0].id);
+      const result = await sendDraft(match.id);
 
       await sendMessage(
         chatId,
@@ -834,11 +843,11 @@ async function routeCommand(
       );
 
       await logAction("email_sent", {
-        draftId: drafts[0].id,
+        draftId: match.id,
         recipient: result.recipient,
       });
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown";
+      const msg = error instanceof Error ? error.message : String(error);
       await sendMessage(chatId, `❌ Send failed: ${escapeMd(msg)}`);
     }
     return;

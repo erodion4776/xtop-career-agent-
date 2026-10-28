@@ -8,10 +8,6 @@ function escapeMd(s: string): string {
   return String(s).replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
 }
 
-function parseArgs(text: string, cmd: string): string {
-  return text.replace(cmd, "").trim();
-}
-
 // ── /repos ─────────────────────────────────────────────
 export async function handleRepos(chatId: number) {
   try {
@@ -93,7 +89,6 @@ export async function handleAnalyze(chatId: number, args: string) {
 
     await sendMessage(chatId, `🔍 Analyzing *${escapeMd(r.owner + "/" + r.repo)}*...\nThis may take 30-60 seconds.`);
 
-    // Gather context: package.json, recent commits, tsconfig
     const files: { path: string; content: string }[] = [];
     const toRead = ["package.json", "tsconfig.json", "src/index.ts"];
     for (const p of toRead) {
@@ -103,7 +98,6 @@ export async function handleAnalyze(chatId: number, args: string) {
       } catch { /* skip missing files */ }
     }
 
-    // Get recent commits for context
     let errorLog = "";
     try {
       const commits = await gh.getCommits(r.owner, r.repo, "main", 5);
@@ -112,7 +106,6 @@ export async function handleAnalyze(chatId: number, args: string) {
       ).join("\n");
     } catch { /* no commits access */ }
 
-    // Check for failed workflow runs
     try {
       const runs = await gh.getWorkflowRuns(r.owner, r.repo, 3);
       const failed = runs.workflow_runs?.filter((r: any) => r.conclusion === "failure");
@@ -147,7 +140,6 @@ export async function handleAnalyze(chatId: number, args: string) {
     ];
     await sendMessage(chatId, report.join("\n"));
 
-    // Log to audit
     await supabase.from("audit_log").insert({
       action: "dev_analyze",
       details: { repo: `${r.owner}/${r.repo}`, description, diagnosis },
@@ -171,7 +163,6 @@ export async function handleFix(chatId: number, args: string) {
 
     await sendMessage(chatId, `🔧 Starting fix for *${escapeMd(repoFullName)}*...\nStep 1/5: Reading files`);
 
-    // Step 1: Read relevant files
     const keyFiles = ["package.json", "tsconfig.json", "src/index.ts", "src/telegram-handler.ts", "src/supabase.ts"];
     const files: { path: string; content: string; sha?: string }[] = [];
     for (const p of keyFiles) {
@@ -188,7 +179,6 @@ export async function handleFix(chatId: number, args: string) {
 
     await sendMessage(chatId, `Step 2/5: Analyzing with AI...`);
 
-    // Step 2: Diagnose
     let errorLog = "";
     try {
       const runs = await gh.getWorkflowRuns(r.owner, r.repo, 3);
@@ -202,14 +192,12 @@ export async function handleFix(chatId: number, args: string) {
 
     await sendMessage(chatId, `Step 3/5: Generating fix...\n_Diagnosis: ${escapeMd(diagnosis.diagnosis)}_`);
 
-    // Step 3: Generate fix
     const fixes = await analyzer.generateFix(diagnosis, files);
     if (!fixes.length) {
       await sendMessage(chatId, "⚠️ AI could not generate a fix. Try a more specific description.");
       return;
     }
 
-    // Step 4: Review changes
     await sendMessage(chatId, `Step 4/5: Reviewing changes...`);
     const originals = fixes.map((fix) => {
       const orig = files.find((f) => f.path === fix.path);
@@ -222,7 +210,6 @@ export async function handleFix(chatId: number, args: string) {
       return;
     }
 
-    // Step 5: Create branch + commit + PR
     await sendMessage(chatId, `Step 5/5: Creating branch and PR...`);
     const branchName = `fix/${Date.now()}-${description.slice(0, 20).replace(/[^a-z0-9]/gi, "-").toLowerCase()}`;
     await gh.createBranch(r.owner, r.repo, branchName);
@@ -285,12 +272,42 @@ export async function handleFix(chatId: number, args: string) {
   }
 }
 
+// ── /netlify ───────────────────────────────────────────
+export async function handleNetlify(chatId: number) {
+  try {
+    if (!nf.isConfigured()) {
+      await sendMessage(chatId, "❌ NETLIFY\\_AUTH\\_TOKEN not set.\nGet one at: Netlify → User settings → Applications → New access token");
+      return;
+    }
+
+    await sendMessage(chatId, "🔍 Fetching your Netlify sites...");
+    const sites = await nf.listSites();
+
+    if (!sites.length) {
+      await sendMessage(chatId, "No sites found on your Netlify account.");
+      return;
+    }
+
+    const lines = sites.map((s: any, i: number) => {
+      const status = s.published_deploy?.state || s.state || "unknown";
+      const icon = status === "ready" ? "✅" : status === "error" ? "❌" : "⏳";
+      const url = s.ssl_url || s.url || "no url";
+      return `${icon} *${i + 1}. ${escapeMd(s.name || "unnamed")}*\n  ${escapeMd(url)}\n  Status: ${escapeMd(status)} | ID: \`${escapeMd(s.id.slice(0, 12))}\``;
+    });
+
+    await sendMessage(chatId, `🌐 *Your Netlify Sites (${sites.length})*\n\n${lines.join("\n\n")}\n\nUse /deploy netlify <name or number> to deploy.`);
+  } catch (e: any) {
+    await sendMessage(chatId, `❌ ${escapeMd(e.message)}`);
+  }
+}
+
 // ── /deploy ────────────────────────────────────────────
 export async function handleDeploy(chatId: number, args: string) {
   try {
-    const target = args.toLowerCase().trim();
+    const parts = args.toLowerCase().trim().split(/\s+/);
+    const target = parts[0] || "render";
 
-    if (target === "render" || !target) {
+    if (target === "render") {
       const apiKey = process.env.RENDER_API_KEY;
       const serviceId = process.env.RENDER_SERVICE_ID || "srv-dbf6gi0ae00c73ev0l9g";
       if (!apiKey) {
@@ -305,21 +322,48 @@ export async function handleDeploy(chatId: number, args: string) {
       if (!res.ok) throw new Error(`Render ${res.status}`);
       const data = await res.json();
       await sendMessage(chatId, `✅ Deploy triggered!\nID: \`${escapeMd(data.id || "unknown")}\`\nStatus: ${escapeMd(data.status || "created")}`);
+
     } else if (target === "netlify") {
       if (!nf.isConfigured()) {
-        await sendMessage(chatId, "❌ NETLIFY\\_AUTH\\_TOKEN and NETLIFY\\_SITE\\_ID not set");
+        await sendMessage(chatId, "❌ NETLIFY\\_AUTH\\_TOKEN not set");
         return;
       }
-      await sendMessage(chatId, "🚀 Triggering Netlify deployment...");
-      const result = await nf.triggerBuild();
-      await sendMessage(chatId, `✅ Netlify deploy triggered via ${escapeMd(result.via)}`);
+
+      const query = parts.slice(1).join(" ");
+      if (!query) {
+        await sendMessage(chatId, "Usage: `/deploy netlify <site name or number>`\nUse /netlify to see your sites first.");
+        return;
+      }
+
+      await sendMessage(chatId, `🔍 Finding Netlify site "${escapeMd(query)}"...`);
+      const sites = await nf.listSites();
+
+      // Try number first
+      const num = parseInt(query, 10);
+      let site: any = null;
+      if (!isNaN(num) && num >= 1 && num <= sites.length) {
+        site = sites[num - 1];
+      } else {
+        site = await nf.findSite(query);
+      }
+
+      if (!site) {
+        await sendMessage(chatId, `❌ No Netlify site matching "${escapeMd(query)}". Use /netlify to see available sites.`);
+        return;
+      }
+
+      await sendMessage(chatId, `🚀 Deploying *${escapeMd(site.name)}*...`);
+      const result = await nf.triggerDeploy(site.id);
+      const deployId = result.deploy?.id || result.deploy?.deploy_id || "triggered";
+      await sendMessage(chatId, `✅ *${escapeMd(site.name)}* deploy triggered!\nID: \`${escapeMd(String(deployId))}\`\nMethod: ${escapeMd(result.method)}`);
+
     } else {
-      await sendMessage(chatId, "Usage: `/deploy render` or `/deploy netlify`");
+      await sendMessage(chatId, "Usage: `/deploy render` or `/deploy netlify <site name>`");
     }
 
     await supabase.from("audit_log").insert({
       action: "deploy",
-      details: { target: target || "render" },
+      details: { target, query: parts.slice(1).join(" ") || undefined },
     });
   } catch (e: any) {
     await sendMessage(chatId, `❌ Deploy failed: ${escapeMd(e.message)}`);
@@ -360,7 +404,7 @@ export async function handleDevStatus(chatId: number) {
       return;
     }
 
-    const lines = logs.map((l: any) => {
+    const lines = (logs as any[]).map((l) => {
       const icon = l.action === "dev_fix" ? "🔧" : l.action === "deploy" ? "🚀" : "🔍";
       const repo = l.details?.repo || l.details?.target || "?";
       return `${icon} ${escapeMd(l.action)} → ${escapeMd(repo)}\n  ${escapeMd(l.created_at?.slice(0, 16) || "?")}`;
@@ -379,6 +423,7 @@ export async function handleDevCommand(chatId: number, cmd: string, args: string
     case "/readfile": return handleReadFile(chatId, args);
     case "/analyze": return handleAnalyze(chatId, args);
     case "/fix": return handleFix(chatId, args);
+    case "/netlify": return handleNetlify(chatId);
     case "/deploy": return handleDeploy(chatId, args);
     case "/ci": return handleCI(chatId, args);
     case "/devstatus": return handleDevStatus(chatId);

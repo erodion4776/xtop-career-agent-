@@ -126,7 +126,7 @@ async function handleBrowse(chatId, args) {
   var repo = parts[1];
   try {
     var contents = await ghApi('/repos/' + owner + '/' + repo + '/contents/', 'GET');
-    var lines = ['*Files in ' + owner + '/' + repo ':*\n'];
+        var lines = ['*Files in ' + owner + '/' + repo + ':*\n'];
     for (var i = 0; i < Math.min(contents.length, 30); i++) {
       var c = contents[i];
       var icon = c.type === 'dir' ? '📁' : '📄';

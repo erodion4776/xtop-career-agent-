@@ -29,10 +29,16 @@ app.post("/telegram/webhook", async (req, res) => {
       return;
     }
 
-    // Route callback queries (button presses) to callback handler
+        // Route callback queries (button presses) to callback handler
     if (update.callback_query) {
-      const { handleCallback } = await import("./callback-handler.js");
-      await handleCallback(update);
+      console.log("📲 Callback received:", update.callback_query.data);
+      try {
+        const { handleCallback } = await import("./callback-handler.js");
+        await handleCallback(update);
+        console.log("✅ Callback handled");
+      } catch (cbErr: any) {
+        console.error("❌ Callback error:", cbErr.message, cbErr.stack);
+      }
     }
     // Route messages to existing handler
     else if (update.message) {

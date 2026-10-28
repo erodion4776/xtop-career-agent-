@@ -62,11 +62,34 @@ async function handleStart(chatId: number) {
     "/readfile <repo> <path> — Read a file",
     "/analyze <repo> <problem> — AI diagnosis",
     "/fix <repo> <problem> — Auto fix + PR",
-    "/deploy render|netlify — Deploy",
+    "/netlify — List all Netlify sites",
+    "/deploy render|netlify <site> — Deploy",
     "/ci \\[repo\\] — CI status",
     "/devstatus — Dev activity log",
+    "",
+    "👇 *Or use the buttons below:*",
   ];
-  await sendMessage(chatId, lines.join("\n"));
+
+  const buttons = [
+    [
+      { text: "📦 GitHub", callback_data: "gr:0" },
+      { text: "🌐 Netlify", callback_data: "nl:0" },
+    ],
+    [
+      { text: "📇 CRM", callback_data: "cr:0" },
+      { text: "📬 Outreach", callback_data: "ol:0" },
+    ],
+    [
+      { text: "🔧 Infra", callback_data: "m:infra" },
+      { text: "🚀 Deploy", callback_data: "dp:menu" },
+    ],
+    [
+      { text: "📊 Report", callback_data: "m:report" },
+      { text: "📋 Tasks", callback_data: "m:tasks" },
+    ],
+  ];
+
+  await sendMessage(chatId, lines.join("\n"), { inline_keyboard: buttons });
 }
 
 // ── /status ────────────────────────────────────────────
@@ -613,21 +636,16 @@ async function handleSend(chatId: number, args: string) {
 
     await sendMessage(chatId, `Step 3/3: Sending to ${escapeMd(p.email)}...`);
 
-    // Try to send via outreach-engine (whatever export name it uses)
     let sent = false;
     try {
       const outreach = await import("./outreach-engine.js") as any;
-      // Try common function names
       const sendFn = outreach.sendEmail || outreach.sendDraft || outreach.send || outreach.sendOutreach;
       if (typeof sendFn === "function") {
         await sendFn(draft.id, p.email, draft.subject, draft.body);
         sent = true;
       }
-    } catch {
-      // outreach-engine may not have a send function
-    }
+    } catch { /* outreach-engine may not have a send function */ }
 
-    // Fallback: try gmail module directly
     if (!sent) {
       try {
         const gmail = await import("./gmail.js") as any;
@@ -636,9 +654,7 @@ async function handleSend(chatId: number, args: string) {
           await sendFn(p.email, draft.subject, draft.body);
           sent = true;
         }
-      } catch {
-        // gmail module may have different API
-      }
+      } catch { /* gmail module may have different API */ }
     }
 
     if (!sent) {
@@ -695,7 +711,7 @@ async function detectProspect(chatId: number, text: string): Promise<boolean> {
   return true;
 }
 
-// ── Main Router (exported as handleUpdate for index.ts) ─
+// ── Main Router ────────────────────────────────────────
 export async function handleUpdate(update: any) {
   const message = update?.message;
   if (!message?.text) return;
@@ -704,7 +720,30 @@ export async function handleUpdate(update: any) {
   const from = message.from;
   if (!chatId || !text) return;
 
+  // ── Check for active session (text input for workflows) ──
+  if (from?.id && !text.startsWith("/")) {
+    try {
+      const { getSession, clearSession } = await import("./session-store.js");
+      const session = await getSession(chatId, from.id);
+      if (session) {
+        if (session.workflow === "analyze" && session.state?.repo) {
+          await clearSession(chatId, from.id);
+          await handleDevCommand(chatId, "/analyze", `${session.state.repo} ${text}`, text);
+          return;
+        }
+        if (session.workflow === "fix" && session.state?.repo) {
+          await clearSession(chatId, from.id);
+          await handleDevCommand(chatId, "/fix", `${session.state.repo} ${text}`, text);
+          return;
+        }
+      }
+    } catch {
+      /* session check failed, continue to normal routing */
+    }
+  }
+
   const { cmd, args } = parseCmd(text);
+
   // ── Operations ──
   if (cmd === "/start" || cmd === "/help") return handleStart(chatId);
   if (cmd === "/status") return handleStatus(chatId);
@@ -740,6 +779,7 @@ export async function handleUpdate(update: any) {
     "/readfile",
     "/analyze",
     "/fix",
+    "/netlify",
     "/deploy",
     "/ci",
     "/devstatus",

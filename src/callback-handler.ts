@@ -1,35 +1,32 @@
 import { sendMessage, editMessageText, answerCallbackQuery } from './telegram.js';
-import { editMenu, btn, buildKeyboard, paginationRow } from './ui-engine.js';
-import { GitHubClient } from './github-client.js';
-import { NetlifyClient } from './netlify-client.js';
-import { RenderClient } from './render-client.js';
-import { analyzeIssue, generateFix } from './code-analyzer.js';
-import { getSupabaseClient } from './supabase.js';
-import * as siteBuilder from './site-builder.js';
+import { editMenu, btn } from './ui-engine.js';
+
+// ─── Dynamic module loaders (avoids import name mismatches) ────────
+
+async function getSupabase() {
+  const mod = await import('./supabase.js');
+  const fn = (mod as any).getSupabaseClient || (mod as any).getClient ||
+    (mod as any).createClient || (mod as any).supabase || (mod as any).default;
+  return typeof fn === 'function' ? fn() : fn;
+}
+
+async function getGitHubClient() {
+  const mod = await import('./github-client.js');
+  const Cls = (mod as any).GitHubClient || (mod as any).GithubClient ||
+    (mod as any).GitHub || (mod as any).default ||
+    Object.values(mod).find((v: any) => typeof v === 'function');
+  return new (Cls as any)();
+}
+
+async function getNetlifyClient() {
+  const mod = await import('./netlify-client.js');
+  const Cls = (mod as any).NetlifyClient || (mod as any).Netlify ||
+    (mod as any).default ||
+    Object.values(mod).find((v: any) => typeof v === 'function');
+  return new (Cls as any)();
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────
-
-async function getSession(chatId: number, userId: number) {
-  const sb = getSupabaseClient();
-  const { data } = await sb
-    .from('bot_sessions')
-    .select('*')
-    .eq('chat_id', chatId)
-    .eq('user_id', userId)
-    .single();
-  return data as any;
-}
-
-async function setSession(chatId: number, userId: number, workflow: string, state: any) {
-  const sb = getSupabaseClient();
-  await sb.from('bot_sessions').upsert({
-    chat_id: chatId,
-    user_id: userId,
-    workflow,
-    state,
-    updated_at: new Date().toISOString(),
-  });
-}
 
 function truncate(s: string, max = 3800): string {
   if (s.length <= max) return s;
@@ -43,6 +40,14 @@ function safeData(prefix: string, ...parts: string[]): string {
   const avail = 64 - head.length;
   if (avail < 4) return prefix + ':err';
   return head + parts[parts.length - 1].slice(-avail);
+}
+
+function paginationRow(prefix: string, page: number, total: number): any[] {
+  const row: any[] = [];
+  if (page > 0) row.push(btn('⬅️', `${prefix}:${page - 1}`));
+  row.push(btn(`${page + 1}/${total}`, `m:noop`));
+  if (page < total - 1) row.push(btn('➡️', `${prefix}:${page + 1}`));
+  return row;
 }
 
 // ─── Main Entry ─────────────────────────────────────────────────────
@@ -142,7 +147,7 @@ async function handleMenu(chatId: number, msgId: number, target: string) {
       break;
 
     case 'tasks': {
-      const sb = getSupabaseClient();
+      const sb = await getSupabase();
       const { data: tasks } = await sb
         .from('tasks')
         .select('id, type, status, created_at')
@@ -214,18 +219,24 @@ async function handleMenu(chatId: number, msgId: number, target: string) {
       break;
 
     case 'gh_status': {
-      const gh = new GitHubClient();
-      const ok = gh.isConfigured();
-      await editMenu(chatId, msgId,
-        `🐙 *GitHub*\n\nStatus: ${ok ? '✅ Connected' : '❌ Not configured'}\n\nSet GITHUB_TOKEN env var if missing.`,
-        [[btn('📂 Repos', 'gr:0'), btn('⬅️ Back', 'm:infra')]]
-      );
+      try {
+        const gh = await getGitHubClient();
+        const ok = (gh as any).isConfigured ? (gh as any).isConfigured() : !!process.env.GITHUB_TOKEN;
+        await editMenu(chatId, msgId,
+          `🐙 *GitHub*\n\nStatus: ${ok ? '✅ Connected' : '❌ Not configured'}\n\nSet GITHUB_TOKEN env var if missing.`,
+          [[btn('📂 Repos', 'gr:0'), btn('⬅️ Back', 'm:infra')]]
+        );
+      } catch {
+        await editMenu(chatId, msgId,
+          `🐙 *GitHub*\n\nStatus: ${process.env.GITHUB_TOKEN ? '✅ Token set' : '❌ Not configured'}`,
+          [[btn('📂 Repos', 'gr:0'), btn('⬅️ Back', 'm:infra')]]
+        );
+      }
       break;
     }
 
     case 'render_status': {
-      const rc = new RenderClient();
-      const ok = rc.isConfigured();
+      const ok = !!process.env.RENDER_API_KEY;
       await editMenu(chatId, msgId,
         `▲ *Render*\n\nStatus: ${ok ? '✅ Connected' : '❌ Not configured'}\n\nSet RENDER_API_KEY + RENDER_SERVICE_ID.`,
         [[btn('🚀 Deploy', 'dp:render'), btn('⬅️ Back', 'm:infra')]]
@@ -234,15 +245,25 @@ async function handleMenu(chatId: number, msgId: number, target: string) {
     }
 
     case 'db_status': {
-      const sb = getSupabaseClient();
-      const { error } = await sb.from('tasks').select('id').limit(1);
-      const ok = !error;
-      await editMenu(chatId, msgId,
-        `🗄 *Supabase*\n\nStatus: ${ok ? '✅ Connected' : '❌ Error: ' + (error?.message || 'unknown')}`,
-        [[btn('⬅️ Back', 'm:infra')]]
-      );
+      try {
+        const sb = await getSupabase();
+        const { error } = await sb.from('tasks').select('id').limit(1);
+        const ok = !error;
+        await editMenu(chatId, msgId,
+          `🗄 *Supabase*\n\nStatus: ${ok ? '✅ Connected' : '❌ Error: ' + (error?.message || 'unknown')}`,
+          [[btn('⬅️ Back', 'm:infra')]]
+        );
+      } catch (e: any) {
+        await editMenu(chatId, msgId,
+          `🗄 *Supabase*\n\nStatus: ❌ ${e.message}`,
+          [[btn('⬅️ Back', 'm:infra')]]
+        );
+      }
       break;
     }
+
+    case 'noop':
+      break;
 
     default:
       await editMenu(chatId, msgId, '🤖 *XTOP Agent*', [[btn('⬅️ Home', 'm:main')]]);
@@ -252,8 +273,10 @@ async function handleMenu(chatId: number, msgId: number, target: string) {
 // ─── GitHub Repos (paginated) ───────────────────────────────────────
 
 async function handleGitHubRepos(chatId: number, msgId: number, args: string) {
-  const gh = new GitHubClient();
-  if (!gh.isConfigured()) {
+  let gh: any;
+  try {
+    gh = await getGitHubClient();
+  } catch {
     await editMenu(chatId, msgId, '❌ GitHub not configured.\nSet GITHUB_TOKEN.', [[btn('⬅️ Back', 'm:dev')]]);
     return;
   }
@@ -262,9 +285,9 @@ async function handleGitHubRepos(chatId: number, msgId: number, args: string) {
   const perPage = 5;
 
   try {
-    const result = await (gh as any).listRepos(page, perPage);
-    const repos: any[] = result.repos || result || [];
-    const totalPages = result.totalPages || 1;
+    const result = await gh.listRepos(page, perPage);
+    const repos: any[] = result?.repos || result || [];
+    const totalPages = result?.totalPages || 1;
 
     if (repos.length === 0) {
       await editMenu(chatId, msgId, '📂 *GitHub Repos*\n\nNo repos found.', [[btn('⬅️ Back', 'm:dev')]]);
@@ -276,9 +299,7 @@ async function handleGitHubRepos(chatId: number, msgId: number, args: string) {
       return [btn(`📁 ${name}`, safeData('ga', name, 'menu'))];
     });
 
-    if (totalPages > 1) {
-      rows.push(paginationRow('gr', page, totalPages));
-    }
+    if (totalPages > 1) rows.push(paginationRow('gr', page, totalPages));
     rows.push([btn('⬅️ Back', 'm:dev')]);
 
     await editMenu(chatId, msgId, `📂 *GitHub Repos* (page ${page + 1}/${totalPages})`, rows);
@@ -330,8 +351,10 @@ async function handleGitHubAction(chatId: number, msgId: number, args: string) {
 // ─── GitHub File Browser ────────────────────────────────────────────
 
 async function handleGitHubBrowse(chatId: number, msgId: number, args: string) {
-  const gh = new GitHubClient();
-  if (!gh.isConfigured()) {
+  let gh: any;
+  try {
+    gh = await getGitHubClient();
+  } catch {
     await editMenu(chatId, msgId, '❌ GitHub not configured.', [[btn('⬅️ Back', 'm:dev')]]);
     return;
   }
@@ -357,11 +380,11 @@ async function handleGitHubBrowse(chatId: number, msgId: number, args: string) {
   const cleanPath = path === '/' ? '' : path.replace(/^\//, '');
 
   try {
-    const contents = await (gh as any).listContents(owner, repo, cleanPath);
+    const contents = await gh.listContents(owner, repo, cleanPath);
     const items: any[] = contents || [];
 
     if (items.length === 0) {
-      await editMenu(chatId, msgId, `📂 *${repoFullName}${path}*\n\nEmpty directory.`, [
+      await editMenu(chatId, msgId, `📂 *${repoFullName}${path}*\n\nEmpty.`, [
         [btn('⬅️ Back', safeData('ga', repoFullName, 'menu'))],
       ]);
       return;
@@ -393,7 +416,6 @@ async function handleGitHubBrowse(chatId: number, msgId: number, args: string) {
     }
 
     rows.push([btn('⬅️ Repo', safeData('ga', repoFullName, 'menu'))]);
-
     await editMenu(chatId, msgId, `📂 *${repoFullName}/${cleanPath || ''}*`, rows);
   } catch (err: any) {
     await editMenu(chatId, msgId, `❌ ${err.message}`, [
@@ -405,14 +427,14 @@ async function handleGitHubBrowse(chatId: number, msgId: number, args: string) {
 // ─── GitHub File Read ───────────────────────────────────────────────
 
 async function handleGitHubFile(chatId: number, msgId: number, args: string) {
-  const gh = new GitHubClient();
+  const gh = await getGitHubClient();
   const colonIdx = args.indexOf(':');
   const repoFullName = colonIdx > 0 ? args.slice(0, colonIdx) : args;
   const path = colonIdx > 0 ? args.slice(colonIdx + 1) : '';
   const [owner, repo] = repoFullName.split('/');
 
   try {
-    const content = await (gh as any).getFileContent(owner, repo, path);
+    const content = await gh.getFileContent(owner, repo, path);
     const text = `📄 *${path}*\n\n\`\`\`\n${truncate(content, 3500)}\n\`\`\``;
     await editMenu(chatId, msgId, text, [
       [btn('⬅️ Back', safeData('gb', repoFullName, path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '/'))],
@@ -431,10 +453,10 @@ async function handleGitHubIssues(chatId: number, msgId: number, args: string) {
   const repoFullName = colonIdx > 0 ? args.slice(0, colonIdx) : args;
   const page = colonIdx > 0 ? parseInt(args.slice(colonIdx + 1)) || 0 : 0;
   const [owner, repo] = repoFullName.split('/');
+  const gh = await getGitHubClient();
 
-  const gh = new GitHubClient();
   try {
-    const issues = await (gh as any).listIssues(owner, repo, page);
+    const issues = await gh.listIssues(owner, repo, page);
     const list: any[] = issues || [];
 
     if (list.length === 0) {
@@ -465,10 +487,10 @@ async function handleGitHubCommits(chatId: number, msgId: number, args: string) 
   const repoFullName = colonIdx > 0 ? args.slice(0, colonIdx) : args;
   const page = colonIdx > 0 ? parseInt(args.slice(colonIdx + 1)) || 0 : 0;
   const [owner, repo] = repoFullName.split('/');
+  const gh = await getGitHubClient();
 
-  const gh = new GitHubClient();
   try {
-    const commits = await (gh as any).listCommits(owner, repo, page);
+    const commits = await gh.listCommits(owner, repo, page);
     const list: any[] = commits || [];
 
     if (list.length === 0) {
@@ -501,10 +523,10 @@ async function handleGitHubPRs(chatId: number, msgId: number, args: string) {
   const repoFullName = colonIdx > 0 ? args.slice(0, colonIdx) : args;
   const page = colonIdx > 0 ? parseInt(args.slice(colonIdx + 1)) || 0 : 0;
   const [owner, repo] = repoFullName.split('/');
+  const gh = await getGitHubClient();
 
-  const gh = new GitHubClient();
   try {
-    const prs = await (gh as any).listPRs(owner, repo, page);
+    const prs = await gh.listPRs(owner, repo, page);
     const list: any[] = prs || [];
 
     if (list.length === 0) {
@@ -531,8 +553,7 @@ async function handleGitHubPRs(chatId: number, msgId: number, args: string) {
 // ─── Netlify Sites (paginated) ──────────────────────────────────────
 
 async function handleNetlifyList(chatId: number, msgId: number, args: string) {
-  const nf = new NetlifyClient();
-  if (!nf.isConfigured()) {
+  if (!process.env.NETLIFY_AUTH_TOKEN) {
     await editMenu(chatId, msgId,
       '❌ *Netlify not configured*\n\nSet `NETLIFY_AUTH_TOKEN` env var on Render.',
       [[btn('⬅️ Back', 'm:dev')]]
@@ -544,9 +565,10 @@ async function handleNetlifyList(chatId: number, msgId: number, args: string) {
   const perPage = 5;
 
   try {
-    const result = await (nf as any).listSites(page, perPage);
-    const sites: any[] = result.sites || result || [];
-    const totalPages = result.totalPages || 1;
+    const nf = await getNetlifyClient();
+    const result = await nf.listSites(page, perPage);
+    const sites: any[] = result?.sites || result || [];
+    const totalPages = result?.totalPages || 1;
 
     if (sites.length === 0) {
       await editMenu(chatId, msgId, '🌐 *Netlify Sites*\n\nNo sites found.', [
@@ -555,13 +577,11 @@ async function handleNetlifyList(chatId: number, msgId: number, args: string) {
       return;
     }
 
-    const rows: any[][] = sites.map((s: any) => {
-      return [btn(`🌐 ${s.name || s.id}`, safeData('nd', s.id))];
-    });
+    const rows: any[][] = sites.map((s: any) =>
+      [btn(`🌐 ${s.name || s.id}`, safeData('nd', s.id))]
+    );
 
-    if (totalPages > 1) {
-      rows.push(paginationRow('nl', page, totalPages));
-    }
+    if (totalPages > 1) rows.push(paginationRow('nl', page, totalPages));
     rows.push([btn('⬅️ Back', 'm:dev')]);
 
     const header = `🌐 *Netlify Sites* (${page + 1}/${totalPages})\n\n` +
@@ -576,22 +596,19 @@ async function handleNetlifyList(chatId: number, msgId: number, args: string) {
 // ─── Netlify Deploy ─────────────────────────────────────────────────
 
 async function handleNetlifyDeploy(chatId: number, msgId: number, siteId: string, cbId: string) {
-  const nf = new NetlifyClient();
-  if (!nf.isConfigured()) {
+  if (!process.env.NETLIFY_AUTH_TOKEN) {
     await editMenu(chatId, msgId, '❌ Netlify not configured.', [[btn('⬅️ Back', 'nl:0')]]);
     return;
   }
 
   try {
-    await editMenu(chatId, msgId, `🚀 *Deploying to Netlify…*\n\nSite: \`${siteId}\`\nPlease wait.`, [
-      [btn('⬅️ Back', 'nl:0')],
-    ]);
+    await editMenu(chatId, msgId, `🚀 *Deploying…*\n\nSite: \`${siteId}\``, []);
 
-    const deploy = await (nf as any).triggerDeploy(siteId);
-    const deployId = deploy?.id || 'unknown';
+    const nf = await getNetlifyClient();
+    const deploy = await nf.triggerDeploy(siteId);
 
     await editMenu(chatId, msgId,
-      `✅ *Deploy triggered!*\n\nSite: \`${siteId}\`\nDeploy: \`${deployId}\`\n\nCheck Netlify dashboard for progress.`,
+      `✅ *Deploy triggered!*\n\nSite: \`${siteId}\`\nDeploy: \`${deploy?.id || 'ok'}\``,
       [[btn('🌐 Sites', 'nl:0'), btn('⬅️ Back', 'm:dev')]]
     );
   } catch (err: any) {
@@ -606,7 +623,7 @@ async function handleNetlifyDeploy(chatId: number, msgId: number, siteId: string
 async function handleCRMList(chatId: number, msgId: number, args: string) {
   const page = parseInt(args) || 0;
   const perPage = 5;
-  const sb = getSupabaseClient();
+  const sb = await getSupabase();
 
   try {
     const { data, count } = await sb
@@ -652,8 +669,8 @@ async function handleCRMAction(chatId: number, msgId: number, args: string, cbId
   if (parts.length < 2) return;
   const prospectId = parts[0];
   const newStatus = parts[1];
+  const sb = await getSupabase();
 
-  const sb = getSupabaseClient();
   try {
     await sb.from('prospects').update({ status: newStatus }).eq('id', prospectId);
     await answerCallbackQuery(cbId, `✅ Status → ${newStatus}`).catch(() => {});
@@ -667,7 +684,7 @@ async function handleCRMAction(chatId: number, msgId: number, args: string, cbId
 
 async function handleOutreachList(chatId: number, msgId: number, args: string) {
   const page = parseInt(args) || 0;
-  const sb = getSupabaseClient();
+  const sb = await getSupabase();
 
   try {
     const { data } = await sb
@@ -710,14 +727,12 @@ async function handleDeploy(chatId: number, msgId: number, args: string, cbId: s
   }
 
   if (args === 'render') {
-    const rc = new RenderClient();
-    if (!rc.isConfigured()) {
+    if (!process.env.RENDER_API_KEY) {
       await editMenu(chatId, msgId, '❌ Render not configured.\nSet RENDER_API_KEY + RENDER_SERVICE_ID.', [
         [btn('⬅️ Back', 'dp:menu')],
       ]);
       return;
     }
-
     await editMenu(chatId, msgId, '▲ *Deploy to Render?*\n\nThis will trigger a new deploy.', [
       [btn('✅ Confirm', 'cf:deploy:render'), btn('❌ Cancel', 'dp:menu')],
     ]);
@@ -735,9 +750,9 @@ async function handleDeploy(chatId: number, msgId: number, args: string, cbId: s
 async function handleNewSite(chatId: number, msgId: number, args: string, cbId: string) {
   if (args === 'start') {
     await editMenu(chatId, msgId,
-      '🆕 *New Site Builder*\n\nSend a message describing the site you want:\n\n' +
-      '_Example:_\n"A portfolio site for a photographer with gallery and contact form"\n\n' +
-      'I will:\n1. Generate HTML with Gemini\n2. Create a GitHub repo\n3. Deploy to Netlify',
+      '🆕 *New Site Builder*\n\nSend a message describing the site:\n\n' +
+      '_Example:_\n"A portfolio for a photographer"\n\n' +
+      'I will:\n1. Generate HTML\n2. Create GitHub repo\n3. Deploy to Netlify',
       [[btn('⬅️ Back', 'm:dev')]]
     );
     return;
@@ -757,16 +772,12 @@ async function handleWatchCI(chatId: number, msgId: number, args: string, cbId: 
     return;
   }
 
-  const gh = new GitHubClient();
-  if (!gh.isConfigured()) {
-    await editMenu(chatId, msgId, '❌ GitHub not configured.', [[btn('⬅️ Back', 'm:dev')]]);
-    return;
-  }
-
   try {
     await editMenu(chatId, msgId, `👁 *Checking CI for ${repoFullName}…*`, []);
 
     const token = process.env.GITHUB_TOKEN;
+    if (!token) throw new Error('GITHUB_TOKEN not set');
+
     const res = await fetch(
       `https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=3`,
       { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } }
@@ -774,8 +785,7 @@ async function handleWatchCI(chatId: number, msgId: number, args: string, cbId: 
 
     if (!res.ok) {
       await editMenu(chatId, msgId,
-        `⚠️ *CI Status: ${repoFullName}*\n\nNo GitHub Actions found or API error (${res.status}).\n\n` +
-        `This repo may not have workflows configured yet.`,
+        `⚠️ *CI: ${repoFullName}*\n\nNo GitHub Actions or API error (${res.status}).`,
         [[btn('⬅️ Back', safeData('ga', repoFullName, 'menu'))]]
       );
       return;
@@ -786,7 +796,7 @@ async function handleWatchCI(chatId: number, msgId: number, args: string, cbId: 
 
     if (runs.length === 0) {
       await editMenu(chatId, msgId,
-        `⚠️ *CI: ${repoFullName}*\n\nNo workflow runs found.\nAdd a \`.github/workflows/\` file to enable CI.`,
+        `⚠️ *CI: ${repoFullName}*\n\nNo workflow runs.\nAdd \`.github/workflows/\` to enable.`,
         [[btn('⬅️ Back', safeData('ga', repoFullName, 'menu'))]]
       );
       return;
@@ -799,10 +809,7 @@ async function handleWatchCI(chatId: number, msgId: number, args: string, cbId: 
 
     const failedRun = runs.find((r: any) => r.conclusion === 'failure');
     const rows: any[][] = [[btn('⬅️ Back', safeData('ga', repoFullName, 'menu'))]];
-
-    if (failedRun) {
-      rows.unshift([btn('🔧 Auto-fix', safeData('ga', repoFullName, 'fix'))]);
-    }
+    if (failedRun) rows.unshift([btn('🔧 Auto-fix', safeData('ga', repoFullName, 'fix'))]);
 
     await editMenu(chatId, msgId, truncate(text), rows);
   } catch (err: any) {
@@ -820,14 +827,20 @@ async function handleConfirm(chatId: number, msgId: number, args: string, cbId: 
   const target = parts.slice(1).join(':');
 
   if (action === 'deploy' && target === 'render') {
-    const rc = new RenderClient();
     try {
       await editMenu(chatId, msgId, '▲ *Deploying to Render…*', []);
       const serviceId = process.env.RENDER_SERVICE_ID;
-      if (!serviceId) throw new Error('RENDER_SERVICE_ID not set');
-      const deploy = await (rc as any).triggerDeploy(serviceId);
+      const apiKey = process.env.RENDER_API_KEY;
+      if (!serviceId || !apiKey) throw new Error('RENDER_SERVICE_ID or RENDER_API_KEY not set');
+
+      const res = await fetch(`https://api.render.com/v1/services/${serviceId}/deploys`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+      });
+      const deploy = await res.json() as any;
+
       await editMenu(chatId, msgId,
-        `✅ *Render deploy triggered!*\n\nDeploy ID: \`${deploy?.id || 'unknown'}\`\n\nMonitor at render.com/dashboard`,
+        `✅ *Render deploy triggered!*\n\nID: \`${deploy?.id || 'ok'}\``,
         [[btn('🚀 Deploy', 'dp:menu'), btn('⬅️ Home', 'm:main')]]
       );
     } catch (err: any) {

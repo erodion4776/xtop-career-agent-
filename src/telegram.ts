@@ -6,7 +6,7 @@ function token(): string {
   return t;
 }
 
-// ── Send message (with optional inline keyboard) ───────
+// ── Send message ───────────────────────────────────────
 export async function sendMessage(
   chatId: number,
   text: string,
@@ -24,14 +24,28 @@ export async function sendMessage(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    return res.json();
+    const data = await res.json();
+    if (!data.ok) {
+      console.error("sendMessage failed:", data.description);
+      // Retry without Markdown if parse error
+      if (data.description?.includes("parse")) {
+        body.parse_mode = undefined;
+        const retry = await fetch(`${API}/bot${token()}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return retry.json();
+      }
+    }
+    return data;
   } catch (e) {
     console.error("sendMessage error:", e);
     return null;
   }
 }
 
-// ── Answer callback query (required by Telegram) ───────
+// ── Answer callback query ──────────────────────────────
 export async function answerCallbackQuery(
   callbackQueryId: string,
   text?: string
@@ -45,11 +59,11 @@ export async function answerCallbackQuery(
       body: JSON.stringify(body),
     });
   } catch {
-    /* ignore expired callbacks */
+    /* ignore */
   }
 }
 
-// ── Edit existing message text + buttons ───────────────
+// ── Edit message text ─────────────────────────────────
 export async function editMessageText(
   chatId: number,
   messageId: number,
@@ -69,8 +83,38 @@ export async function editMessageText(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    return res.json();
-  } catch {
-    return null;
+    const data = await res.json();
+    if (!data.ok) {
+      console.error("editMessageText failed:", data.description);
+      // If Markdown parse error, retry without it
+      if (data.description?.includes("parse")) {
+        body.parse_mode = undefined;
+        const retry = await fetch(`${API}/bot${token()}/editMessageText`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const retryData = await retry.json();
+        if (!retryData.ok) {
+          console.error("editMessageText retry failed:", retryData.description);
+          // Last resort: send a new message instead of editing
+          const newMsg = await sendMessage(chatId, text, replyMarkup);
+          return newMsg;
+        }
+        return retryData;
+      }
+      // "message is not modified" is fine, ignore it
+      if (data.description?.includes("not modified")) {
+        return data;
+      }
+      // For any other error, send new message
+      const newMsg = await sendMessage(chatId, text, replyMarkup);
+      return newMsg;
+    }
+    return data;
+  } catch (e) {
+    console.error("editMessageText error:", e);
+    // Fallback: send new message
+    return sendMessage(chatId, text, replyMarkup);
   }
 }

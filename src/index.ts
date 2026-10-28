@@ -31,6 +31,17 @@ import {
 
 import { discoverJobs } from "./job-discovery.js";
 
+// === WORKFORCE: new imports ===
+import {
+  isConfigured as telegramReady,
+  setWebhook,
+} from "./telegram.js";
+import { handleUpdate } from "./telegram-handler.js";
+import { listRecentTasks, getTask } from "./task-engine.js";
+import { processPendingTasks } from "./task-runner.js";
+import { logAction } from "./audit-log.js";
+// === END WORKFORCE ===
+
 const app = express();
 
 app.set("trust proxy", 1);
@@ -88,7 +99,10 @@ app.get("/api-info", (_req, res) => {
       "remote job discovery",
       "Nigeria eligibility assessment",
       "Gmail OAuth connection",
-      "test email to authorized account"
+      "test email to authorized account",
+      "telegram workforce control",   // === WORKFORCE ===
+      "persistent task engine",       // === WORKFORCE ===
+      "audit logging"                 // === WORKFORCE ===
     ]
   });
 });
@@ -189,6 +203,62 @@ app.get("/auth/google/callback", async (req, res) => {
     );
   }
 });
+
+// === WORKFORCE: Telegram webhook (no x-agent-key auth) ===
+app.post("/telegram/webhook", async (req, res) => {
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim();
+
+  if (webhookSecret) {
+    const supplied = req.header("x-telegram-bot-api-secret-token");
+    if (supplied !== webhookSecret) {
+      res.status(403).json({ ok: false, error: "Invalid webhook secret." });
+      return;
+    }
+  }
+
+  if (!telegramReady()) {
+    res.status(503).json({ ok: false, error: "Telegram not configured." });
+    return;
+  }
+
+  // Respond immediately so Telegram doesn't retry
+  res.json({ ok: true });
+
+  // Process the update asynchronously
+  try {
+    await handleUpdate(req.body as Record<string, unknown>);
+  } catch (error) {
+    console.error(
+      "[Telegram] Update handling error:",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+});
+
+// === WORKFORCE: Telegram webhook setup helper ===
+app.post("/api/telegram/setup-webhook", authenticate, async (req, res) => {
+  if (!telegramReady()) {
+    res.status(503).json({ ok: false, error: "Telegram not configured." });
+    return;
+  }
+
+  const publicUrl = process.env.RENDER_EXTERNAL_URL
+    || `https://xtop-career-agent.onrender.com`;
+  const webhookUrl = `${publicUrl}/telegram/webhook`;
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim();
+
+  try {
+    await setWebhook(webhookUrl, secret);
+    await logAction("webhook_configured", { url: webhookUrl });
+    res.json({ ok: true, webhookUrl });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Webhook setup failed.",
+    });
+  }
+});
+// === END WORKFORCE ===
 
 // All /api routes below this point require the agent API key.
 app.use("/api", authenticate);
@@ -351,9 +421,80 @@ app.post("/api/gmail/test-send", async (_req, res) => {
   }
 });
 
+// === WORKFORCE: Task API routes ===
+app.get("/api/tasks", async (req, res) => {
+  try {
+    const limit = Math.min(
+      Number(req.query.limit) || 10,
+      50
+    );
+    const tasks = await listRecentTasks(limit);
+    res.json({ ok: true, tasks });
+  } catch {
+    res.status(500).json({
+      ok: false,
+      error: "Could not retrieve tasks."
+    });
+  }
+});
+
+app.get("/api/tasks/:id", async (req, res) => {
+  try {
+    const task = await getTask(req.params.id);
+    if (!task) {
+      res.status(404).json({ ok: false, error: "Task not found." });
+      return;
+    }
+    res.json({ ok: true, task });
+  } catch {
+    res.status(500).json({
+      ok: false,
+      error: "Could not retrieve task."
+    });
+  }
+});
+
+app.post("/api/tasks/process", async (_req, res) => {
+  try {
+    const completed = await processPendingTasks();
+    res.json({ ok: true, completed });
+  } catch {
+    res.status(500).json({
+      ok: false,
+      error: "Task processing failed."
+    });
+  }
+});
+// === END WORKFORCE ===
+
 // Start server
 app.listen(port, "0.0.0.0", () => {
   console.log(
     `XTOP Career Agent listening on port ${port}`
   );
+
+  // === WORKFORCE: auto-configure Telegram webhook on startup ===
+  if (telegramReady()) {
+    const publicUrl = process.env.RENDER_EXTERNAL_URL
+      || "https://xtop-career-agent.onrender.com";
+    const webhookUrl = `${publicUrl}/telegram/webhook`;
+    const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim();
+
+    setWebhook(webhookUrl, secret)
+      .then(() => {
+        console.log(`[Telegram] Webhook set to ${webhookUrl}`);
+        return logAction("webhook_auto_configured", { url: webhookUrl });
+      })
+      .catch((err) => {
+        console.error(
+          "[Telegram] Webhook setup failed:",
+          err instanceof Error ? err.message : String(err)
+        );
+      });
+  } else {
+    console.log(
+      "[Telegram] Not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID to enable."
+    );
+  }
+  // === END WORKFORCE ===
 });

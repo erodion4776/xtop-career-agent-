@@ -261,6 +261,72 @@ async function handleFix(chatId: any, userId: any, args: any): Promise<void> {
     var committed = 0;
     for (var i = 0; i < plan.files.length; i++) {
       var file = plan.files[i];
+async function handleFix(chatId: any, userId: any, args: any): Promise<void> {
+  var parts = args.trim().split(' ');
+  var repoPath = parts[0];
+  var description = parts.slice(1).join(' ');
+  if (!repoPath || !description) {
+    await sendMessage(chatId, 'Usage: /fix owner/repo description of the issue');
+    return;
+  }
+  var slashParts = repoPath.split('/');
+  if (slashParts.length !== 2) {
+    await sendMessage(chatId, 'Repo must be owner/repo (exactly one slash)');
+    return;
+  }
+  var owner = slashParts[0];
+  var repo = slashParts[1];
+
+  await sendMessage(chatId, 'Generating fix... this may take 1-2 minutes.');
+
+  try {
+    var mod: any = await import('./code-analyzer.js');
+    var generateFix = mod.generateFix || (mod.default && mod.default.generateFix);
+    if (!generateFix) {
+      await sendMessage(chatId, 'Code analyzer module not available');
+      return;
+    }
+
+    var plan: any = await generateFix(owner, repo, description);
+    if (!plan || !plan.files || plan.files.length === 0) {
+      await sendMessage(chatId, 'No fix generated. Try a more specific description.');
+      return;
+    }
+
+    await sendMessage(chatId, 'Plan ready. Applying to GitHub...\n\nDiagnosis: ' + (plan.diagnosis || 'see PR') + '\nFiles: ' + plan.files.length);
+
+    // STEP 1: Get default branch name
+    var repoInfo: any = await ghApi('/repos/' + owner + '/' + repo, 'GET');
+    var defaultBranch = repoInfo.default_branch || 'main';
+
+    // STEP 2: Get latest commit SHA via commits API (NOT git/refs)
+    var commits: any = await ghApi('/repos/' + owner + '/' + repo + '/commits?per_page=1', 'GET');
+    if (!commits || commits.length === 0) {
+      await sendMessage(chatId, 'Repo appears to be empty (no commits). Push at least one commit first.');
+      return;
+    }
+    var baseSha = commits[0].sha;
+
+    // STEP 3: Create new branch
+    var branchName = plan.branch || ('fix/issue-' + Date.now());
+    try {
+      await ghApi('/repos/' + owner + '/' + repo + '/git/refs', 'POST', {
+        ref: 'refs/heads/' + branchName,
+        sha: baseSha
+      });
+    } catch (branchErr: any) {
+      var errMsg = branchErr.message || '';
+      if (errMsg.indexOf('422') >= 0) {
+        // Branch already exists
+      } else {
+        throw branchErr;
+      }
+    }
+
+    // STEP 4: Commit each file
+    var committed = 0;
+    for (var i = 0; i < plan.files.length; i++) {
+      var file = plan.files[i];
       var fileSha = '';
 
       try {
